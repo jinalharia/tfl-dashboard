@@ -277,6 +277,15 @@
       : `<span class="delta delta-down">▼ ${-d} pts quieter than usual</span>`;
   }
 
+  /** True when TfL has no crowding data at all for this NaPTAN (e.g. Network Rail-run and DLR stations). */
+  function notCovered(naptan) {
+    const p = state.profiles.get(naptan);
+    const live = state.live.get(naptan);
+    const profileMissing = (p instanceof Error && p.status === 404) || (p && !(p instanceof Error) && !p.found && !p.alwaysQuiet);
+    const liveMissing = (live instanceof Error && live.status === 404) || (live && !(live instanceof Error) && !live.available);
+    return Boolean(profileMissing && liveMissing);
+  }
+
   function liveFor(naptan) {
     const live = state.live.get(naptan);
     if (!live || live instanceof Error || !live.available) return null;
@@ -314,13 +323,15 @@
         .map((l) => `<span class="mini-line"><span class="swatch" style="--line:${esc(l.colour)}"></span>${esc(l.name)}</span>`)
         .join('');
       let body;
-      if (live instanceof Error) {
-        body = `<p class="tile-empty">${live.status === 404 ? 'TfL doesn’t publish live crowding for this station.' : esc(live.message)}</p>`;
+      if (notCovered(n.id)) {
+        body = '<p class="tile-empty">TfL doesn’t publish crowding data for these entrances.</p>';
+      } else if (live instanceof Error) {
+        body = `<p class="tile-empty">${esc(live.message)}</p>`;
       } else if (!live || !live.available) {
-        body = '<p class="tile-empty">No live reading right now (the feed may be paused overnight or for this station).</p>';
+        body = '<p class="tile-empty">No live reading right now. The feed can pause overnight.</p>';
       } else {
-        // timeLocal is London time without an offset, so show its clock time as-is.
-        const when = /T(\d{2}:\d{2})/.exec(live.timeLocal || '');
+        // timeLocal is London time without an offset (e.g. "2026-09-26 21:46:00"), so show its clock time as-is.
+        const when = /[T ](\d{2}:\d{2})/.exec(live.timeLocal || '');
         body = `
           <div class="tile-value">${pct(live.value)}<span class="tile-unit">of baseline</span></div>
           <div class="tile-level">${levelBadge(live.value)}</div>
@@ -440,7 +451,9 @@
         : `<span class="status status-info"><span class="status-icon" aria-hidden="true">ℹ</span>${state.statusError ? 'Status unavailable' : 'No status'}</span>`;
 
       const crowdHtml = stationValue === null
-        ? `<p class="muted small">No live crowding reading for ${esc(naptan ? naptan.label : 'this station')} right now.</p>`
+        ? `<p class="muted small">${notCovered(line.naptan)
+            ? `TfL doesn’t publish crowding data for the ${esc(naptan ? naptan.label : '')} entrances here.`
+            : `No live crowding reading for ${esc(naptan ? naptan.label : 'this station')} right now.`}</p>`
         : `
           <div class="crowd-row">
             <span class="crowd-label">Station busyness</span>

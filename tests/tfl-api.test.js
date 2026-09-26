@@ -10,6 +10,8 @@ test('normalizeLive reads percentageOfBaseline in either casing', () => {
   assert.equal(T.normalizeLive({ dataAvailable: true, percentageOfBaseLine: 0.3 }).value, 0.3);
   assert.equal(T.normalizeLive({ dataAvailable: false, percentageOfBaseline: 0 }).available, false);
   assert.equal(T.normalizeLive({}).available, false);
+  // Real "no data" response, e.g. /crowding/910GSTFD/Live
+  assert.equal(T.normalizeLive({ dataAvailable: false, percentageOfBaseline: 0, timeUtc: null, timeLocal: null }).available, false);
 });
 
 test('toFraction tolerates percentages', () => {
@@ -107,12 +109,22 @@ test('summarizeArrivals groups by platform and sorts by time', () => {
   assert.deepEqual(out[0].trains.map((t) => [t.destination, t.minutes]), [['Brixton', 1], ['Brixton', 4]]);
 });
 
+test('summarizeArrivals tidies rail destinations and puts unconfirmed platforms last', () => {
+  const out = T.summarizeArrivals([
+    { lineId: 'elizabeth', platformName: 'Platform Unknown', destinationName: 'Paddington Rail Station', timeToStation: 60 },
+    { lineId: 'elizabeth', platformName: 'Platform 8', destinationName: 'Shenfield Rail Station', timeToStation: 300 },
+  ], 'elizabeth');
+  assert.deepEqual(out.map((p) => p.platform), ['Platform 8', 'Platform not yet confirmed']);
+  assert.equal(out[1].trains[0].destination, 'Paddington');
+});
+
 test('summarizeTrainLoadings finds nested trainLoadings for the line', () => {
-  const raw = [{ lines: [{ id: 'victoria', crowding: { trainLoadings: [
-    { line: 'Victoria', lineDirection: 'Northbound', timeSlice: '0800-0815', value: 6 },
-    { line: 'Victoria', lineDirection: 'Northbound', timeSlice: '1400-1415', value: 3 },
+  // Shape as returned by /StopPoint/940GZZLUOXC/Crowding/victoria (lines[].crowding.trainLoadings).
+  const raw = { naptanId: '940GZZLUOXC', lines: [{ id: 'victoria', crowding: { trainLoadings: [
+    { line: 'Victoria', lineDirection: 'NB', platformDirection: 'NB', direction: 'Outbound', naptanTo: '940GZZLUWRR', timeSlice: '0800-0815', value: 4 },
+    { line: 'Victoria', lineDirection: 'NB', platformDirection: 'NB', direction: 'Outbound', naptanTo: '940GZZLUWRR', timeSlice: '1400-1415', value: 2 },
     { line: 'Central', lineDirection: 'Eastbound', timeSlice: '1400-1415', value: 5 },
-  ] } }] }];
+  ] } }] };
   const out = T.summarizeTrainLoadings(raw, { id: 'victoria', name: 'Victoria' }, 14 * 60 + 5);
   assert.deepEqual(out, [{ direction: 'Northbound', relative: 0.5 }]);
 });

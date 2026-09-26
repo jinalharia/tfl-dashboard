@@ -148,7 +148,7 @@
     for (const dir of dirs) {
       for (let m = 5 * 60; m < 24 * 60; m += 15) {
         const bias = rand(line + dir) * 0.4 + 0.6;
-        rows.push({ line: LINE_NAMES[line], lineDirection: dir, direction: dir, naptanTo: '', timeSlice: root.TflApi.formatClock(m).replace(':', '') + '-' + root.TflApi.formatClock(m + 15).replace(':', ''), value: Math.round(1 + 5 * typical(naptan, 'MON', m) * bias) });
+        rows.push({ line: LINE_NAMES[line], lineDirection: dir.slice(0, 1) + 'B', platformDirection: dir.slice(0, 1) + 'B', direction: 'Inbound', naptanTo: '', timeSlice: root.TflApi.formatClock(m).replace(':', '') + '-' + root.TflApi.formatClock(m + 15).replace(':', ''), value: Math.round(1 + 5 * typical(naptan, 'MON', m) * bias) });
       }
     }
     return [{ naptanId: naptan, commonName: NAPTANS[naptan].name, lines: [{ id: line, name: LINE_NAMES[line], crowding: { passengerFlows: [], trainLoadings: rows } }] }];
@@ -185,7 +185,7 @@
       if (lower[2] === 'live') {
         const v = typical(naptan, now.day, now.minutes) * (0.8 + 0.45 * rand(naptan + Math.floor(Date.now() / 300000)));
         const d = new Date();
-        return { dataAvailable: true, percentageOfBaseline: Number(v.toFixed(3)), timeUtc: d.toISOString(), timeLocal: d.toISOString().slice(0, 11) + root.TflApi.formatClock(now.minutes) + ':00' };
+        return { dataAvailable: true, percentageOfBaseline: Number(v.toFixed(3)), timeUtc: d.toISOString(), timeLocal: d.toISOString().slice(0, 10) + ' ' + root.TflApi.formatClock(now.minutes) + ':00' };
       }
       const day = (parts[2] || now.day).toUpperCase();
       const peak = (mu) => root.TflApi.formatClock(mu) + '-' + root.TflApi.formatClock(mu + 15);

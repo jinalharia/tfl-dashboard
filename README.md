@@ -42,6 +42,8 @@ Opening `index.html` directly from disk also works.
 | Next trains | `GET /StopPoint/{naptan}/Arrivals` |
 | Typical train loading per line | `GET /StopPoint/{naptan}/Crowding/{line}?direction=all` |
 
+**Coverage:** TfL doesn't publish crowding for every station. When checked, it was available for Underground stations and some Elizabeth line stations such as Bond Street (`910GBONDST`), but not for Stratford's DLR or rail entrances (`940GZZDLSTD`, `910GSTFD`) or Liverpool Street rail (`910GLIVST`). When the API reports `isFound: false` and no live reading, the dashboard says there's no data rather than showing a blank.
+
 Crowding bands used for the labels: Quiet < 25%, Moderately busy 25–50%, Busy 50–75%, Very busy ≥ 75% of baseline.
 
 **Platform outlook** is this dashboard's own heuristic, not a TfL figure. It starts from the station's live level and raises it for disruption on that line (a full step for severe disruption, part of a step for minor delays) and a little when the next train is 8 or more minutes away.

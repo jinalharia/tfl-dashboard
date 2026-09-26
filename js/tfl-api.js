@@ -302,10 +302,11 @@
     const byPlatform = new Map();
     for (const a of arrivals || []) {
       if (a.lineId !== lineId) continue;
-      const platform = a.platformName || a.direction || 'Platform';
+      const named = a.platformName && !/^platform unknown$/i.test(a.platformName) ? a.platformName : null;
+      const platform = named || 'Platform not yet confirmed';
       if (!byPlatform.has(platform)) byPlatform.set(platform, []);
       byPlatform.get(platform).push({
-        destination: String(a.destinationName || a.towards || 'Check front of train').replace(/ (Underground|DLR) Station$/, ''),
+        destination: String(a.destinationName || a.towards || 'Check front of train').replace(/\s+(Underground|DLR|Rail|Overground)\s+Station$/i, ''),
         minutes: Math.max(0, Math.round((a.timeToStation || 0) / 60)),
         seconds: a.timeToStation || 0,
         location: a.currentLocation || '',
@@ -313,8 +314,14 @@
     }
     return [...byPlatform.entries()]
       .map(([platform, trains]) => ({ platform, trains: trains.sort((x, y) => x.seconds - y.seconds).slice(0, limit) }))
-      .sort((a, b) => a.platform.localeCompare(b.platform, 'en', { numeric: true }));
+      .sort((a, b) => {
+        const au = a.platform === 'Platform not yet confirmed';
+        const bu = b.platform === 'Platform not yet confirmed';
+        return au - bu || a.platform.localeCompare(b.platform, 'en', { numeric: true });
+      });
   }
+
+  const DIRECTION_NAMES = { NB: 'Northbound', SB: 'Southbound', EB: 'Eastbound', WB: 'Westbound' };
 
   /**
    * /StopPoint/{id}/Crowding/{line} → per-direction train loading at `minutes`,
@@ -337,7 +344,8 @@
       const start = parseClock(t.timeSlice);
       const value = Number(t.value);
       if (start === null || !Number.isFinite(value)) continue;
-      const dir = t.lineDirection || t.direction || t.platformDirection || 'All trains';
+      const raw = t.lineDirection || t.platformDirection || t.direction || 'All trains';
+      const dir = DIRECTION_NAMES[String(raw).toUpperCase()] || raw;
       if (!byDir.has(dir)) byDir.set(dir, []);
       byDir.get(dir).push({ x: serviceMinutes(start), value });
     }
