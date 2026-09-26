@@ -11,7 +11,10 @@ Search for a station (or pick a popular one) and the dashboard shows:
   - the live station busyness for the entrances that line uses, with a tick for what's usual now
   - a *platform outlook* estimate (see below)
   - typical train loading per direction, where TfL publishes it
+  - typical passenger flow for that line at the station by time of day, as a small chart
   - the next trains on each platform
+- **Step-free access alerts** when a lift at the station is out of service (or a note that none are reported).
+- **A quieter-time hint** for each entrance group, e.g. "Usually quieter from 18:45 (about 40%)", from today's typical profile.
 
 The page refreshes live data every 60 seconds. You can switch this off.
 
@@ -40,11 +43,16 @@ Opening `index.html` directly from disk also works.
 | Typical busyness for today | `GET /crowding/{naptan}/{dayOfWeek}` → `timeBands[].percentageOfBaseLine`, AM/PM peak bands |
 | Line status | `GET /Line/{ids}/Status` |
 | Next trains | `GET /StopPoint/{naptan}/Arrivals` |
-| Typical train loading per line | `GET /StopPoint/{naptan}/Crowding/{line}?direction=all` |
+| Typical train loading and passenger flow per line | `GET /StopPoint/{naptan}/Crowding/{line}?direction=all` → `lines[].crowding.trainLoadings` and `passengerFlows` |
+| Lift faults (step-free access) | `GET /Disruptions/Lifts/v2/` → `stationUniqueId` (hub or station code), `disruptedLiftUniqueIds`, `message`. Used by tfl.gov.uk but not in the published swagger, so the dashboard hides lift status if it fails. |
 
 **Coverage:** TfL doesn't publish crowding for every station. When checked, it was available for Underground stations and some Elizabeth line stations such as Bond Street (`910GBONDST`), but not for Stratford's DLR or rail entrances (`940GZZDLSTD`, `910GSTFD`) or Liverpool Street rail (`910GLIVST`). When the API reports `isFound: false` and no live reading, the dashboard says there's no data rather than showing a blank.
 
 Crowding bands used for the labels: Quiet < 25%, Moderately busy 25–50%, Busy 50–75%, Very busy ≥ 75% of baseline.
+
+**Typical passenger flow** is the sum of the unlabelled `passengerFlows` values TfL returns per 15-minute slice. TfL doesn't say which are entries, exits or interchanges, or which day type the profile is for (its peaks look like a weekday). On weekends the card says so.
+
+**Quieter-time hint** looks up to 3 hours ahead in today's typical profile. It finds the first half-hour that sits a crowding band below the current live reading, or, when it's quiet now, the next busier period.
 
 **Platform outlook** is this dashboard's own heuristic, not a TfL figure. It starts from the station's live level and raises it for disruption on that line (a full step for severe disruption, part of a step for minor delays) and a little when the next train is 8 or more minutes away.
 

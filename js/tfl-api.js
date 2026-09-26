@@ -361,6 +361,78 @@
     return out.sort((a, b) => a.direction.localeCompare(b.direction));
   }
 
+  /**
+   * TfL's static crowding response also carries `passengerFlows` for the requested line:
+   * several unlabelled values per 15-minute slice. Summing them per slice gives the
+   * line's typical passenger flow at this station by time of day.
+   * → { bands: [{x, start, value}], peak: {start, value} } or null
+   */
+  function summarizePassengerFlows(raw, line) {
+    const entries = [];
+    for (const l of (raw && raw.lines) || []) {
+      if (l && slug(l.id) !== slug(line.id) && slug(l.name) !== slug(line.name)) continue;
+      const flows = pick(pick(l, 'crowding'), 'passengerFlows');
+      if (Array.isArray(flows)) entries.push(...flows);
+    }
+    const totals = new Map();
+    for (const f of entries) {
+      const start = parseClock(f.timeSlice);
+      const value = Number(f.value);
+      if (start === null || !Number.isFinite(value)) continue;
+      totals.set(start, (totals.get(start) || 0) + value);
+    }
+    if (!totals.size) return null;
+    const bands = [...totals.entries()]
+      .map(([start, value]) => ({ start, x: serviceMinutes(start), value }))
+      .sort((a, b) => a.x - b.x);
+    const peak = bands.reduce((best, b) => (b.value > best.value ? b : best), bands[0]);
+    if (!(peak.value > 0)) return null;
+    return { bands, peak: { start: peak.start, value: peak.value } };
+  }
+
+  /**
+   * When is it usually quieter (or busier)? Looks ahead through today's typical bands
+   * from `minutes`, starting from the live value if there is one, else the typical value now.
+   * Returns one of:
+   *   {kind: 'quieter', start, value}  first band (held for 30 min) a crowding level below now
+   *   {kind: 'stays'}                  no quieter period within the window
+   *   {kind: 'busier', start, value}   currently quiet, but a busier period is coming
+   *   {kind: 'calm'}                   quiet now and for the whole window
+   *   null                             no profile
+   */
+  function quieterTimeHint(bands, minutes, liveValue, windowMinutes) {
+    if (!bands || !bands.length) return null;
+    const windowLen = windowMinutes || 180;
+    const nowBand = bandAt(bands, minutes);
+    const current = liveValue !== null && liveValue !== undefined ? liveValue : nowBand ? nowBand.value : null;
+    if (current === null) return null;
+    const level = crowdingLevel(current).pips;
+    const nowX = serviceMinutes(minutes);
+    const ahead = bands.filter((b) => b.x > nowX && b.x <= nowX + windowLen);
+    if (level >= 2) {
+      for (let i = 0; i < ahead.length; i++) {
+        const next = ahead[i + 1];
+        const lower = (b) => crowdingLevel(b.value).pips < level;
+        if (lower(ahead[i]) && (!next || lower(next))) return { kind: 'quieter', start: ahead[i].start, value: ahead[i].value };
+      }
+      return { kind: 'stays' };
+    }
+    const busier = ahead.find((b) => crowdingLevel(b.value).pips >= 2);
+    return busier ? { kind: 'busier', start: busier.start, value: busier.value } : { kind: 'calm' };
+  }
+
+  /** /Disruptions/Lifts/v2 → the entries for any of `ids` (hub code or station NaPTANs). */
+  function liftDisruptionsFor(raw, ids) {
+    const wanted = new Set(ids.filter(Boolean).map((id) => String(id).toUpperCase()));
+    return (Array.isArray(raw) ? raw : [])
+      .filter((d) => d && wanted.has(String(d.stationUniqueId || '').toUpperCase()))
+      .map((d) => ({
+        station: d.stationUniqueId,
+        lifts: Array.isArray(d.disruptedLiftUniqueIds) ? d.disruptedLiftUniqueIds.length : 0,
+        message: String(d.message || 'A lift at this station is out of service.'),
+      }));
+  }
+
   // ---------------------------------------------------------------------------
   // HTTP client
   // ---------------------------------------------------------------------------
@@ -443,6 +515,11 @@
         return normalizeStatuses(await get(`/Line/${lineIds.map(enc).join(',')}/Status`));
       },
 
+      /** Lift outages across the network (used by tfl.gov.uk; not in the published swagger). */
+      async getLiftDisruptions() {
+        return get('/Disruptions/Lifts/v2/');
+      },
+
       async getTrainLoadings(naptan, lineId) {
         return get(`/StopPoint/${enc(naptan)}/Crowding/${enc(lineId)}`, { direction: 'all' });
       },
@@ -468,6 +545,9 @@
     normalizeStatuses,
     summarizeArrivals,
     summarizeTrainLoadings,
+    summarizePassengerFlows,
+    quieterTimeHint,
+    liftDisruptionsFor,
     lineColour,
   };
 

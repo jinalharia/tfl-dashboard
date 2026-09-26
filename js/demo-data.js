@@ -151,7 +151,24 @@
         rows.push({ line: LINE_NAMES[line], lineDirection: dir.slice(0, 1) + 'B', platformDirection: dir.slice(0, 1) + 'B', direction: 'Inbound', naptanTo: '', timeSlice: root.TflApi.formatClock(m).replace(':', '') + '-' + root.TflApi.formatClock(m + 15).replace(':', ''), value: Math.round(1 + 5 * typical(naptan, 'MON', m) * bias) });
       }
     }
-    return [{ naptanId: naptan, commonName: NAPTANS[naptan].name, lines: [{ id: line, name: LINE_NAMES[line], crowding: { passengerFlows: [], trainLoadings: rows } }] }];
+    // Like the real response: ~10 unlabelled passengerFlows values per 15-minute slice.
+    const flows = [];
+    const lineBias = 0.5 + rand(line + naptan);
+    for (let m = 0; m < 24 * 60; m += 15) {
+      if (m >= 60 && m < 5 * 60 + 15) continue;
+      const total = 4000 * typical(naptan, 'MON', m) * lineBias;
+      for (let k = 0; k < 10; k++) {
+        flows.push({ timeSlice: root.TflApi.formatClock(m).replace(':', '') + '-' + root.TflApi.formatClock(m + 15).replace(':', ''), value: Math.round((total / 10) * (0.4 + 1.2 * rand(line + m + k))) });
+      }
+    }
+    return { naptanId: naptan, commonName: NAPTANS[naptan].name, lines: [{ id: line, name: LINE_NAMES[line], crowding: { passengerFlows: flows, trainLoadings: rows } }] };
+  }
+
+  function liftDisruptions() {
+    return [
+      { stationUniqueId: 'HUBSRA', disruptedLiftUniqueIds: ['HUBSRA-Lift-3'], message: 'Stratford: No step-free access between the street and platforms 13 and 14 (Jubilee line) due to a faulty lift. Call us on 0343 222 1234 if you need help planning your journey.' },
+      { stationUniqueId: '940GZZLUWYP', disruptedLiftUniqueIds: ['940GZZLUWYP-Lift-5'], message: 'Wembley Park: No lift service between the street and ticket hall.' },
+    ];
   }
 
   function search(q) {
@@ -178,6 +195,7 @@
       if (NAPTANS[id]) return stopPoint(id);
       return null;
     }
+    if (lower[0] === 'disruptions' && lower[1] === 'lifts') return liftDisruptions();
     if (lower[0] === 'line' && lower[2] === 'status') return lineStatuses(parts[1].split(','));
     if (lower[0] === 'crowding' && parts[1]) {
       const naptan = parts[1];

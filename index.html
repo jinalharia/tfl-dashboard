@@ -48,6 +48,8 @@
         </div>
       </section>
 
+      <div id="lift-status" class="lift-status" role="status" hidden></div>
+
       <section aria-labelledby="tiles-title">
         <h2 id="tiles-title" class="section-title">Live busyness by station entrance group</h2>
         <p class="section-sub muted">TfL measures crowding per station NaPTAN. Interchanges have one per network (e.g. Underground vs Elizabeth line), so lines are grouped by the entrances they share.</p>
@@ -78,6 +80,9 @@
           <li><strong>Typical profile</strong> — <code>/crowding/{naptan}/{day}</code>: the usual busyness for today’s day of week, in 15-minute bands.</li>
           <li><strong>Line status &amp; next trains</strong> — <code>/Line/{ids}/Status</code> and <code>/StopPoint/{naptan}/Arrivals</code>.</li>
           <li><strong>Typical train loading</strong> — <code>/StopPoint/{naptan}/Crowding/{line}</code>, shown per direction relative to that direction’s busiest time slice, where TfL publishes it.</li>
+          <li><strong>Quieter-time hint</strong> — looks ahead up to 3 hours in today’s typical profile for the first half-hour that drops a crowding band below the current reading.</li>
+          <li><strong>Typical passenger flow</strong> — the <code>passengerFlows</code> values TfL returns with <code>/StopPoint/{naptan}/Crowding/{line}</code>, summed per 15 minutes. TfL doesn’t label the individual flows (for example entries vs interchanges), so treat it as relative busyness for that line at this station. TfL gives one profile with no day of the week; its morning and evening peaks suggest a weekday pattern.</li>
+          <li><strong>Lift faults</strong> — <code>/Disruptions/Lifts/v2/</code>, the feed behind tfl.gov.uk’s step-free information. It isn’t in the published API docs, so if it’s unavailable the dashboard simply doesn’t show lift status.</li>
           <li><strong>*Platform outlook</strong> is an estimate made by this dashboard, not a TfL figure: the station’s live level, raised a step for severe disruption, part of a step for minor delays, and a little when the next train is 8+ minutes away.</li>
         </ul>
         <p class="muted small">Powered by TfL Open Data. Contains OS data © Crown copyright and database rights.</p>

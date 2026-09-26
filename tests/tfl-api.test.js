@@ -140,3 +140,56 @@ test('client surfaces rate limiting clearly', async () => {
   const client = T.createClient({ fetch: async () => ({ ok: false, status: 429 }) });
   await assert.rejects(client.getArrivals('x'), /rate limit/);
 });
+
+test('summarizePassengerFlows sums the unlabelled flows per slice for the requested line', () => {
+  // Shape as returned by /StopPoint/940GZZLUOXC/Crowding/central: only the requested line carries flows.
+  const raw = { naptanId: '940GZZLUOXC', lines: [
+    { id: 'bakerloo', name: 'Bakerloo', crowding: {} },
+    { id: 'central', name: 'Central', crowding: { passengerFlows: [
+      { timeSlice: '0800-0815', value: 100 }, { timeSlice: '0800-0815', value: 50 },
+      { timeSlice: '1745-1800', value: 300 }, { timeSlice: '1745-1800', value: 20 },
+      { timeSlice: '0000-0015', value: 5 },
+    ] } },
+  ] };
+  const out = T.summarizePassengerFlows(raw, { id: 'central', name: 'Central' });
+  assert.deepEqual(out.bands.map((b) => [b.start, b.value]), [[480, 150], [1065, 320], [0, 5]]);
+  assert.deepEqual(out.peak, { start: 1065, value: 320 });
+  assert.equal(T.summarizePassengerFlows(raw, { id: 'bakerloo', name: 'Bakerloo' }), null);
+  assert.equal(T.summarizePassengerFlows(null, { id: 'central', name: 'Central' }), null);
+});
+
+function profile(pairs) {
+  return T.normalizeDay({ timeBands: pairs.map(([t, v]) => ({ timeBand: t, percentageOfBaseLine: v })) }, 'MON').bands;
+}
+
+test('quieterTimeHint finds the first sustained drop in crowding band', () => {
+  const bands = profile([
+    ['17:30-17:45', 0.6], ['17:45-18:00', 0.65], ['18:00-18:15', 0.55], // Busy
+    ['18:15-18:30', 0.45], ['18:30-18:45', 0.6], // brief dip to Moderately busy, not sustained
+    ['18:45-19:00', 0.4], ['19:00-19:15', 0.35],
+  ]);
+  assert.deepEqual(T.quieterTimeHint(bands, 17 * 60 + 40, null), { kind: 'quieter', start: 18 * 60 + 45, value: 0.4 });
+  // The live reading, when present, sets the starting level instead of the typical value.
+  assert.deepEqual(T.quieterTimeHint(bands, 17 * 60 + 40, 0.1), { kind: 'busier', start: 17 * 60 + 45, value: 0.65 });
+  assert.deepEqual(T.quieterTimeHint(bands, 17 * 60 + 40, 0.3), { kind: 'stays' });
+});
+
+test('quieterTimeHint reports busier periods ahead and steady states', () => {
+  const bands = profile([['07:00-07:15', 0.1], ['07:15-07:30', 0.2], ['07:30-07:45', 0.55]]);
+  assert.deepEqual(T.quieterTimeHint(bands, 7 * 60 + 5, null), { kind: 'busier', start: 7 * 60 + 30, value: 0.55 });
+  const steady = profile([['08:00-08:15', 0.9], ['08:15-08:30', 0.9]]);
+  assert.deepEqual(T.quieterTimeHint(steady, 8 * 60 + 1, null), { kind: 'stays' });
+  assert.equal(T.quieterTimeHint([], 480, 0.5), null);
+});
+
+test('liftDisruptionsFor matches hub codes and station NaPTANs', () => {
+  // Shape as returned by /Disruptions/Lifts/v2/
+  const raw = [
+    { stationUniqueId: 'HUBIMP', disruptedLiftUniqueIds: ['HUBIMP-Lift-2'], message: 'Imperial Wharf: No Step Free Access' },
+    { stationUniqueId: '940GZZLUWYP', disruptedLiftUniqueIds: ['940GZZLUWYP-Lift-5', '940GZZLUWYP-Lift-6'], message: 'Wembley Park: no lift service' },
+  ];
+  assert.deepEqual(T.liftDisruptionsFor(raw, ['HUBWYP', '940GZZLUWYP']), [{ station: '940GZZLUWYP', lifts: 2, message: 'Wembley Park: no lift service' }]);
+  assert.equal(T.liftDisruptionsFor(raw, ['HUBIMP']).length, 1);
+  assert.deepEqual(T.liftDisruptionsFor(raw, ['940GZZLUOXC']), []);
+  assert.deepEqual(T.liftDisruptionsFor({ message: 'error' }, ['HUBIMP']), []);
+});
