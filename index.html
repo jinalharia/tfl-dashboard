@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live station crowding</title>
+  <meta name="description" content="Live crowding for every Underground, Elizabeth line, DLR, Overground and Tram line at a London station, from the TfL API.">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="roundel" viewBox="0 0 40 32" aria-hidden="true"><circle cx="20" cy="16" r="12" fill="none" stroke="#DC241F" stroke-width="6"/><rect x="2" y="12.5" width="36" height="7" fill="#0019A8"/></svg>
+      <div>
+        <h1>Live station crowding</h1>
+        <p class="tagline">Every line at a London station, from the TfL API</p>
+      </div>
+    </div>
+    <form id="search-form" class="search" role="search" autocomplete="off">
+      <label for="station-search" class="visually-hidden">Search for a station</label>
+      <input id="station-search" type="search" placeholder="Search stations, e.g. Waterloo" role="combobox"
+             aria-autocomplete="list" aria-controls="search-results" aria-expanded="false" spellcheck="false">
+      <ul id="search-results" class="results" role="listbox" hidden></ul>
+    </form>
+    <div class="actions">
+      <button id="theme-toggle" type="button" class="ghost">Theme: Auto</button>
+      <button id="settings-open" type="button" class="ghost">Settings</button>
+    </div>
+  </header>
+
+  <nav id="quick-picks" class="quick-picks" aria-label="Popular stations"></nav>
+
+  <main id="content">
+    <div id="message" class="message" role="status"></div>
+
+    <div id="station-view" hidden>
+      <p id="demo-banner" class="demo-banner" hidden>Demo mode — synthetic data shaped like the TfL API. Remove <code>?demo</code> from the URL for live data.</p>
+
+      <section class="station-head">
+        <div>
+          <h2 id="station-name"></h2>
+          <p id="station-meta" class="muted"></p>
+        </div>
+        <div class="refresh">
+          <span id="updated" class="muted small"></span>
+          <label class="toggle"><input id="auto-refresh" type="checkbox" checked> Auto-refresh (60 s)</label>
+          <button id="refresh-now" type="button" class="ghost">Refresh now</button>
+        </div>
+      </section>
+
+      <section aria-labelledby="tiles-title">
+        <h2 id="tiles-title" class="section-title">Live busyness by station entrance group</h2>
+        <p class="section-sub muted">TfL measures crowding per station NaPTAN. Interchanges have one per network (e.g. Underground vs Elizabeth line), so lines are grouped by the entrances they share.</p>
+        <div id="tiles" class="tiles"></div>
+      </section>
+
+      <section id="chart-card" class="card chart-card" aria-labelledby="chart-title">
+        <h2 id="chart-title" class="card-title">Today: typical vs live</h2>
+        <p id="chart-sub" class="muted small"></p>
+        <div id="chart-legend" class="legend"></div>
+        <div id="chart" class="chart"></div>
+        <p id="chart-peaks" class="muted small"></p>
+        <details class="table-view">
+          <summary>Show data table</summary>
+          <div id="chart-table" class="table-wrap"></div>
+        </details>
+      </section>
+
+      <section aria-labelledby="lines-title">
+        <h2 id="lines-title" class="section-title">Lines at this station</h2>
+        <div id="lines" class="lines"></div>
+      </section>
+
+      <section class="about card">
+        <h2 class="card-title">About the data</h2>
+        <ul>
+          <li><strong>Station busyness</strong> — <code>/crowding/{naptan}/Live</code>: near-real-time busyness, refreshed by TfL about every 5 minutes, as a share of a per-station baseline that TfL sets (roughly the station’s usual busiest level, so values can exceed 100%). Crowding bands used here: Quiet &lt; 25%, Moderately busy 25–50%, Busy 50–75%, Very busy ≥ 75%.</li>
+          <li><strong>Typical profile</strong> — <code>/crowding/{naptan}/{day}</code>: the usual busyness for today’s day of week, in 15-minute bands.</li>
+          <li><strong>Line status &amp; next trains</strong> — <code>/Line/{ids}/Status</code> and <code>/StopPoint/{naptan}/Arrivals</code>.</li>
+          <li><strong>Typical train loading</strong> — <code>/StopPoint/{naptan}/Crowding/{line}</code>, shown per direction relative to that direction’s busiest time slice, where TfL publishes it.</li>
+          <li><strong>*Platform outlook</strong> is an estimate made by this dashboard, not a TfL figure: the station’s live level, raised a step for severe disruption, part of a step for minor delays, and a little when the next train is 8+ minutes away.</li>
+        </ul>
+        <p class="muted small">Powered by TfL Open Data. Contains OS data © Crown copyright and database rights.</p>
+      </section>
+    </div>
+  </main>
+
+  <dialog id="settings">
+    <form id="settings-form" method="dialog">
+      <h2>Settings</h2>
+      <label for="app-key">TfL API app key (optional)</label>
+      <input id="app-key" type="text" placeholder="Primary key from api-portal.tfl.gov.uk" spellcheck="false">
+      <p class="muted small">The API works without a key at a lower rate limit. A free key from the TfL API portal raises it. The key is stored only in this browser.</p>
+      <div class="dialog-actions">
+        <button id="settings-cancel" type="button" class="ghost">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="js/tfl-api.js"></script>
+  <script src="js/demo-data.js"></script>
+  <script src="js/chart.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
