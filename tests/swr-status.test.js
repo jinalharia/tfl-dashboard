@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const S = require('../js/swr-status.js');
+const A = require('../js/swr-api.js');
 
 // GET https://www.southwesternrailway.com/api/LiveInformationBoard (2026-09-27 ~19:20 BST, all 13 groups)
 const LIVE_BOARD = [
@@ -193,14 +194,14 @@ test('normalizeRouteGroups copes with a missing board on either side', () => {
   assert.equal(S.normalizeRouteGroups([{ RouteName: 'X', StatusText: 'Minor Delays', StatusId: 'n/a' }], null)[0].statusId, null);
 });
 
-test('parseSwrDateTime reads SWR times as Europe/London', () => {
-  assert.equal(S.parseSwrDateTime('19:18:22 27/09/2026').toISOString(), '2026-09-27T18:18:22.000Z'); // BST
-  assert.equal(S.parseSwrDateTime('10:00:00 15/01/2026').toISOString(), '2026-01-15T10:00:00.000Z'); // GMT
-  assert.equal(S.parseSwrDateTime('09:05 29/03/2026').toISOString(), '2026-03-29T08:05:00.000Z'); // after the clocks go forward
-  assert.equal(S.parseSwrDateTime('2026-09-27T18:19:00+00:00').toISOString(), '2026-09-27T18:19:00.000Z');
-  assert.equal(S.parseSwrDateTime('25:00:00 27/09/2026'), null);
-  assert.equal(S.parseSwrDateTime(''), null);
-  assert.equal(S.parseSwrDateTime('yesterday'), null);
+test('SwrApi.parseUkTime reads SWR UpdatedTime as Europe/London (used by normalizeIncidents)', () => {
+  assert.equal(A.parseUkTime('19:18:22 27/09/2026').toISOString(), '2026-09-27T18:18:22.000Z'); // BST
+  assert.equal(A.parseUkTime('10:00:00 15/01/2026').toISOString(), '2026-01-15T10:00:00.000Z'); // GMT
+  assert.equal(A.parseUkTime('09:05:00 29/03/2026').toISOString(), '2026-03-29T08:05:00.000Z'); // after the clocks go forward
+  // 01:30 happens twice when the clocks go back; either instant is a fair reading.
+  assert.ok(['2026-10-25T00:30:00.000Z', '2026-10-25T01:30:00.000Z'].includes(A.parseUkTime('01:30:00 25/10/2026').toISOString()));
+  assert.equal(A.parseUkTime('25:00:00 27/09/2026'), null);
+  assert.equal(A.parseUkTime(''), null);
 });
 
 test('normalizeIncidents maps Colour to severity and sorts most severe first', () => {
@@ -249,17 +250,6 @@ test('snapshotAge flags snapshots older than 45 minutes', () => {
   assert.equal(S.snapshotAge('garbage', now).stale, true);
 });
 
-test('safeHref repairs http://https:// and keeps only allowed https hosts', () => {
-  assert.equal(S.safeHref('http://https://www.nationalrail.co.uk/service-disruptions/clapham-junction-20260927/'), 'https://www.nationalrail.co.uk/service-disruptions/clapham-junction-20260927/');
-  assert.equal(S.safeHref('http://www.southwesternrailway.com/x'), 'https://www.southwesternrailway.com/x');
-  assert.equal(S.safeHref('https://tfl.gov.uk/'), 'https://tfl.gov.uk/');
-  assert.equal(S.safeHref('http://www.traveline.info/'), null);
-  assert.equal(S.safeHref('javascript:alert(1)'), null);
-  assert.equal(S.safeHref('https://nationalrail.co.uk.evil.example/'), null);
-  assert.equal(S.safeHref('https://user@www.nationalrail.co.uk/'), null);
-  assert.equal(S.safeHref(''), null);
-});
-
 test('swrHeadline reuses TfL status normalisation and turns a bare URL reason into a link', () => {
   const h = S.swrHeadline(TFL_SWR);
   assert.equal(h.cls, 'info');
@@ -275,52 +265,39 @@ test('swrHeadline reuses TfL status normalisation and turns a bare URL reason in
   assert.equal(text.cls, 'warning');
   assert.deepEqual(text.reasons, ['Delays between Woking and Guildford.']);
   assert.deepEqual(text.links, []);
+  // http://, www. and the doubled scheme are made https (SwrApi.safeHref only accepts https).
+  for (const r of ['http://www.nationalrail.co.uk/a/', 'www.nationalrail.co.uk/a/', 'http://https://www.nationalrail.co.uk/a/']) {
+    assert.deepEqual(S.swrHeadline({ cls: 'info', description: 'x', reasons: [r] }).links, [{ text: 'National Rail details', href: 'https://www.nationalrail.co.uk/a/' }], r);
+  }
   // A bare URL to a host we don't link to stays as text.
   assert.deepEqual(S.swrHeadline({ cls: 'info', description: 'x', reasons: ['https://example.com/a'] }).reasons, ['https://example.com/a']);
   assert.equal(S.swrHeadline(new Map()), null);
 });
 
-test('htmlParagraphs (local fallback) splits paragraphs, decodes entities and keeps safe links', () => {
-  const paras = S.htmlParagraphs(OVERALL.LineUpdates[0].Details);
+test('paragraphsOf goes through SwrApi.htmlToText: paragraphs, entities and safe links', () => {
+  const paras = S.paragraphsOf(OVERALL.LineUpdates[0].Details);
   assert.equal(paras[0].text, 'Following a passenger being taken ill on a train earlier today at Godalming all lines have now reopened.');
   assert.equal(paras[1].text, "What's Going On:\nTrain services running through this station are returning to normal.");
   assert.equal(paras[2].text, 'Long Distance & Mainline Services');
 
-  const msg = S.htmlParagraphs(HUXLEY_WAT.nrccMessages[0].value);
+  const msg = S.paragraphsOf(HUXLEY_WAT.nrccMessages[0].value);
   assert.equal(msg.length, 1);
   assert.match(msg[0].text, /up to 60 minutes, diverted or revised\. .*National Rail website\.$/);
   assert.deepEqual(msg[0].links, [{ text: 'National Rail website.', href: 'https://www.nationalrail.co.uk/service-disruptions/clapham-junction-20260927/' }]);
 
-  const hostile = S.htmlParagraphs('<script>alert(1)</script><img src=x onerror=alert(1)>Hi <a href="javascript:alert(1)">there</a>');
-  assert.deepEqual(hostile, [{ text: 'Hi there', links: [] }]);
+  // Bare safe URLs in FurtherInfo become links.
+  assert.deepEqual(S.paragraphsOf(OVERALL.LineUpdates[1].FurtherInfo)[0].links.map((l) => l.href), ['https://www.southwesternrailway.com/contact-and-help/refunds-and-compensation']);
+
+  const hostile = S.paragraphsOf('<script>alert(1)</script><img src=x onerror=alert(1)>Hi <a href="javascript:alert(1)">there</a>');
+  assert.equal(hostile.length, 1);
+  assert.equal(hostile[0].text, 'Hi there');
+  assert.deepEqual(hostile[0].links, []);
+  assert.deepEqual(S.paragraphsOf(''), []);
+  assert.deepEqual(S.paragraphsOf(null), []);
 });
 
-test('adaptParagraphs accepts the likely htmlToText shapes', () => {
-  assert.deepEqual(S.adaptParagraphs('One\n\nTwo'), [{ text: 'One', links: [] }, { text: 'Two', links: [] }]);
-  assert.deepEqual(S.adaptParagraphs(['One', '']), [{ text: 'One', links: [] }]);
-  assert.deepEqual(
-    S.adaptParagraphs([{ text: 'See', links: [{ text: 'NR', href: 'http://https://www.nationalrail.co.uk/a' }, { text: 'bad', href: 'https://evil.example/' }] }]),
-    [{ text: 'See', links: [{ text: 'NR', href: 'https://www.nationalrail.co.uk/a' }] }]
-  );
-  assert.deepEqual(S.adaptParagraphs(null), []);
-});
-
-test('htmlParagraphs prefers SwrApi.htmlToText when it exists', () => {
-  const had = Object.prototype.hasOwnProperty.call(globalThis, 'SwrApi');
-  const prev = globalThis.SwrApi;
-  globalThis.SwrApi = { htmlToText: () => [{ text: 'from S0', links: [] }] };
-  try {
-    assert.deepEqual(S.htmlParagraphs('<p>x</p>'), [{ text: 'from S0', links: [] }]);
-    globalThis.SwrApi = { htmlToText: () => { throw new Error('boom'); } };
-    assert.deepEqual(S.htmlParagraphs('<p>x</p>'), [{ text: 'x', links: [] }]);
-  } finally {
-    if (had) globalThis.SwrApi = prev;
-    else delete globalThis.SwrApi;
-  }
-});
-
-test('renderStatusHtml without a snapshot: TfL headline and station messages only', () => {
-  const html = S.renderStatusHtml({
+test('renderStatus without a snapshot: TfL headline and station messages only', () => {
+  const { html, blocks } = S.renderStatus({
     headline: S.swrHeadline(TFL_SWR),
     snapshot: null,
     snapshotLoaded: true,
@@ -331,14 +308,23 @@ test('renderStatusHtml without a snapshot: TfL headline and station messages onl
   assert.match(html, /href="https:\/\/www\.nationalrail\.co\.uk\/service-disruptions\/overton-20260327\/"[^>]*>National Rail details</);
   assert.match(html, /Status by route group and SWR's incident details aren't available here/);
   assert.match(html, /National Rail messages for London Waterloo/);
-  assert.match(html, /clapham-junction-20260927/);
-  assert.doesNotMatch(html, /http:\/\/https:/);
   assert.doesNotMatch(html, /swr-st-groups/);
   assert.match(html, /About this data/);
   assert.match(html, /Huxley2, an unofficial/);
+  // Message HTML stays out of the string: one empty slot per message, filled by SwrApi.renderParagraphs.
+  assert.doesNotMatch(html, /nationalrail\.co\.uk\/service-disruptions\/clapham/);
+  assert.equal((html.match(/data-para="\d+"><\/div>/g) || []).length, 2);
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[0][0].links[0].href, 'https://www.nationalrail.co.uk/service-disruptions/clapham-junction-20260927/');
+
+  const failed = S.renderStatus({ headline: null, snapshot: null, snapshotLoaded: true, station: { crs: 'WAT', name: 'London Waterloo' }, messages: null, messagesError: new Error('x') }, new Date());
+  assert.match(failed.html, /Loading status from TfL/);
+  assert.match(failed.html, /Station messages are unavailable: Huxley2 didn't respond/);
+  const none = S.renderStatus({ snapshot: null, snapshotLoaded: true, station: { crs: 'SUR', name: 'Surbiton' }, messages: [] }, new Date());
+  assert.match(none.html, /No National Rail messages for this station/);
 });
 
-test('renderStatusHtml with a snapshot: groups, incidents, as-of time, stale flag, and escaping', () => {
+test('renderStatus with a snapshot: groups, incidents, as-of time, stale flag, and escaping', () => {
   const now = new Date('2026-09-27T19:30:00Z');
   const snapshot = {
     fetchedAt: '2026-09-27T18:20:00Z',
@@ -347,7 +333,7 @@ test('renderStatusHtml with a snapshot: groups, incidents, as-of time, stale fla
     liveInformationBoard: LIVE_BOARD,
     rainbowBoard: RAINBOW,
   };
-  const html = S.renderStatusHtml({ headline: null, headlineError: new Error('TfL API returned 500'), snapshot, snapshotLoaded: true, station: null }, now);
+  const { html, blocks } = S.renderStatus({ headline: null, headlineError: new Error('TfL API returned 500'), snapshot, snapshotLoaded: true, station: null }, now);
   assert.match(html, /Status unavailable/);
   assert.match(html, /Status by route group/);
   assert.match(html, /as of 19:20 \(1 h 10 min ago\)/);
@@ -357,16 +343,32 @@ test('renderStatusHtml with a snapshot: groups, incidents, as-of time, stale fla
   assert.match(html, /1 of 2 services not running normally/);
   assert.match(html, /Major disruption<\/span><span class="swr-st-isum">&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.doesNotMatch(html, /<img/);
-  assert.match(html, /What&#39;s Going On:/);
+  assert.match(html, /Updated 19:18/);
+  assert.match(html, /More information/);
   assert.match(html, /taken at 19:20 \(1 h 10 min ago\)/);
   assert.doesNotMatch(html, /National Rail messages for/); // no station yet
+  // Details and FurtherInfo each get a slot.
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[0][1].text, "What's Going On:\nTrain services running through this station may be delayed by up to 30 minutes or revised.");
 
-  const fresh = S.renderStatusHtml({ headline: S.swrHeadline(TFL_SWR), snapshot: { ...snapshot, fetchedAt: '2026-09-27T19:20:00Z', errors: { rainbowBoard: 'timeout' } }, snapshotLoaded: true, station: null }, now);
-  assert.doesNotMatch(fresh, /May be out of date/);
-  assert.match(fresh, /Missing from this snapshot: rainbowBoard/);
+  const fresh = S.renderStatus({ headline: S.swrHeadline(TFL_SWR), snapshot: { ...snapshot, fetchedAt: '2026-09-27T19:20:00Z', errors: { rainbowBoard: 'timeout' } }, snapshotLoaded: true, station: null }, now);
+  assert.doesNotMatch(fresh.html, /May be out of date/);
+  assert.match(fresh.html, /Missing from this snapshot: rainbowBoard/);
+
+  // The route-group list is open before a station is chosen, folded after, and follows the viewer's choice.
+  assert.match(html, /<details class="swr-st-routes" open><summary><span class="swr-st-routes-count">3 major disruption, 1 planned closure, 5 special timetable, 4 good service</);
+  const withStation = { headline: null, snapshot, snapshotLoaded: true, station: { crs: 'WAT', name: 'London Waterloo' }, messages: [] };
+  assert.match(S.renderStatus(withStation, now).html, /<details class="swr-st-routes"><summary>/);
+  assert.match(S.renderStatus({ ...withStation, routesOpen: true }, now).html, /<details class="swr-st-routes" open>/);
+  assert.match(S.renderStatus({ ...withStation, station: null, routesOpen: false }, now).html, /<details class="swr-st-routes"><summary>/);
+  // Names may wrap after "/" instead of mid-word.
+  assert.match(html, /Reading\/<wbr>Windsor Lines/);
+
+  const loading = S.renderStatus({ snapshot: null, snapshotLoaded: false, station: null }, now);
+  assert.match(loading.html, /Loading SWR route status/);
 });
 
-test('demo fixture: status.json in the S7 format, answered only for that path', () => {
+test('demo routes: status.json in the S7 format and TfL status for the line, nothing else', () => {
   const now = new Date('2026-09-27T18:30:00Z');
   const snap = S.demoStatusSnapshot(now);
   assert.deepEqual(Object.keys(snap).sort(), ['errors', 'fetchedAt', 'liveInformationBoard', 'overallstatus', 'rainbowBoard']);
@@ -380,6 +382,11 @@ test('demo fixture: status.json in the S7 format, answered only for that path', 
 
   assert.ok(S.demoRoute('data/swr/status.json'));
   assert.ok(S.demoRoute('https://example.github.io/tfl-dashboard/data/swr/status.json?t=1'));
+  const tfl = S.demoRoute('https://api.tfl.gov.uk/Line/south-western-railway/Status');
+  assert.deepEqual(S.swrHeadline(tfl), S.swrHeadline(TFL_SWR));
+  assert.ok(S.demoRoute('https://api.tfl.gov.uk/Line/south-western-railway/Status?app_key=x'));
+  assert.equal(S.demoRoute('https://api.tfl.gov.uk/Line/south-western-railway/Status/2026-09-27/to/2026-10-11'), null);
+  assert.equal(S.demoRoute('https://api.tfl.gov.uk/Line/northern/Status'), null);
   assert.equal(S.demoRoute('data/swr/performance.json'), null);
   assert.equal(S.demoRoute('https://huxley2.azurewebsites.net/departures/WAT/40'), null);
 });
@@ -387,6 +394,5 @@ test('demo fixture: status.json in the S7 format, answered only for that path', 
 test('the module loads in Node without window and exposes its registration object', () => {
   assert.equal(typeof globalThis.window, 'undefined');
   assert.equal(S.module.id, 'status');
-  assert.equal(typeof S.module.onStation, 'function');
-  assert.equal(typeof S.module.refresh, 'function');
+  for (const hook of ['init', 'onStation', 'refresh']) assert.equal(typeof S.module[hook], 'function', hook);
 });

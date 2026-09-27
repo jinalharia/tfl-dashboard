@@ -30,9 +30,9 @@ Live site: https://jinalharia.github.io/tfl-dashboard/. Until the repo owner swi
 | SWR-1 | Train length on each departure, short-train warning | ⬜ Not started | S1 |
 | SWR-7 | Delay and cancellation reasons on each departure | ⬜ Not started | S1 |
 | SWR-8 | Where is my train (calling points) | ⬜ Not started | S2 |
-| SWR-4 | SWR overall status (headline) | ⬜ Not started | S3 |
-| SWR-5 | Status by route group | ⬜ Not started | S3 |
-| SWR-6 | Incident details (ticket acceptance, replacement buses) | ⬜ Not started | S3 |
+| SWR-4 | SWR overall status (headline) | ✅ Done | S3 |
+| SWR-5 | Status by route group | ✅ Done; waiting for S7 snapshots in production | S3 |
+| SWR-6 | Incident details (ticket acceptance, replacement buses) | ✅ Done; waiting for S7 snapshots in production | S3 |
 | SWR-2 | Typical busyness per morning train into Waterloo | ⬜ Not started | S4 |
 | SWR-10 | SWR planned closures, next 14 days (investigate first) | ⬜ Not started | S5 |
 | SWR-11 | Station punctuality and cancellations | ⬜ Not started | S6 |
@@ -299,6 +299,20 @@ S0 builds exactly these names, so the other packages can code against them befor
 - **Tests:** `normalizeCallingPoints(railinfo)` and `normalizeHuxleyCallingPoints(huxley)` produce the same shape: order, passed or not, late minutes, and a cancelled stop.
 
 ### Package S3: SWR service status (items SWR-4, SWR-5, SWR-6)
+
+**Status: ✅ done.** SWR-5 and SWR-6 wait for S7's `data/swr/status.json` in production; until then the section shows the TfL headline and the Huxley messages and says route status isn't available here. Notes from building it (checked on 2026-09-27 in headless Chromium at 390 px, light and dark: `?demo`, the live TfL and Huxley APIs through `page.route` + `curl`, and a served copy with a hand-made `status.json` from a fresh fetch):
+- **Files:** `js/swr-status.js` (pure helpers exported for Node, a renderer, demo routes, the module), `css/swr-status.css`, `tests/swr-status.test.js`.
+- **Lifecycle:** `init(ctx)` loads the TfL headline and the snapshot before a station is chosen; `onStation` adds the station's `nrccMessages`; `refresh` reloads all three (1 TfL request a minute; the snapshot and Huxley calls are cached by `SwrApi`). Late Huxley answers are dropped with `ctx.isStale()`. A failed refresh keeps the last good data, and open `<details>` stay open across refreshes.
+- **Status ids:** a fresh fetch also showed `1` Minor Disruption and `3` Planned Closure. Mapped to the TfL classes as 0 good, 1 warning, 2 critical, 3 serious, 4 info; any other id by its text.
+- **Route-group mapping** (`ROUTE_GROUPS`, this dashboard's own; SWR doesn't publish one). All 49 RainbowBoard descriptions map; anything new goes under "Other routes":
+  - Kingston/Shepperton: Shepperton, both Kingston loops. Chessington/Epsom: Chessington South, Dorking, Guildford via Epsom.
+  - Suburban Lines: Woking and Basingstoke "(Stopping)" (the least certain). Surbiton/Cobham: Guildford via Cobham, Hampton Court.
+  - Hounslow Loop: both Richmond/Brentford loops. Reading/Windsor Lines: Reading, Windsor & Eton Riverside, Weybridge via Staines.
+  - South Western Mainline: Weymouth, Portsmouth Harbour via Basingstoke, Alton. West of England: Salisbury/Yeovil/Exeter St Davids. Portsmouth Direct: Portsmouth via Guildford.
+  - South Hampshire Locals: Southampton–Portsmouth & Southsea, Winchester–Southampton Central/Bournemouth, Lymington Branch. Romsey/Salisbury: Romsey Rounders. Ascot/Guildford: Aldershot via Ascot, Ascot–Aldershot, Guildford–Farnham. Island Line: Island Line.
+- **Layout:** `#swr-status` sits above the station header, so on a phone the 13 groups pushed the station's own sections about 3000 px down. The group list is one `<details>` with a count line ("3 major disruption, 1 planned closure, 5 special timetable, 4 good service"): open before a station is chosen, folded after, and it keeps the viewer's own choice. Groups are worst first.
+- **HTML:** incident `Details`/`FurtherInfo` and `nrccMessages` stay raw in the normalised data and are rendered only through `SwrApi.htmlToText` + `SwrApi.renderParagraphs` into empty slots; everything else is escaped. Times use `SwrApi.parseUkTime` (the repeated 01:30 on the October clock change reads as the GMT one).
+- **Demo:** `SwrApi.demoRoutes` answers `data/swr/status.json` (real samples, times moved to just before now) and TfL's `/Line/south-western-railway/Status` (the real "Special Service" with a National Rail link). Station messages in `?demo` come from S1's Huxley route.
 
 At the top of the SWR tab, in `#swr-status`.
 

@@ -11,7 +11,8 @@
  * (opened from disk, or before S7) the section shows the TfL headline and the Huxley messages only.
  *
  * Incident Details/FurtherInfo and nrccMessages are untrusted HTML: they're kept raw in the normalised data
- * (`detailsHtml`, `html`) and turned into plain paragraphs at render time by htmlParagraphs(), then escaped.
+ * (`detailsHtml`, `html`) and only turned into DOM at render time, through paragraphsOf() (SwrApi.htmlToText)
+ * and SwrApi.renderParagraphs(). Every other API string is escaped with esc().
  *
  * Classic script; the pure helpers are also exported for Node tests.
  */
@@ -19,11 +20,11 @@
   'use strict';
 
   const T = root.TflApi || (typeof require === 'function' ? require('./tfl-api.js') : null);
+  const A = root.SwrApi || (typeof require === 'function' ? require('./swr-api.js') : null);
 
   const LINE_ID = 'south-western-railway';
   const STALE_MINUTES = 45;
   const HEADLINE_TTL_MS = 55 * 1000;
-  const SNAPSHOT_TTL_MS = 55 * 1000;
   const OTHER_GROUP = 'Other routes';
 
   const STATUS_RANK = { good: 0, info: 1, warning: 2, serious: 3, critical: 4 };
@@ -94,9 +95,6 @@
   const normKey = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().toLowerCase();
   const GROUP_BY_DESCRIPTION = new Map();
   for (const [group, list] of Object.entries(ROUTE_GROUPS)) for (const d of list) GROUP_BY_DESCRIPTION.set(normKey(d), group);
-
-  // Hosts whose links are kept (https only), matching SwrApi.htmlToText's rule.
-  const LINK_HOSTS = ['southwesternrailway.com', 'nationalrail.co.uk', 'networkrail.co.uk', 'tfl.gov.uk'];
 
   const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clean = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
@@ -205,41 +203,6 @@
   // SWR-6: incidents
   // ---------------------------------------------------------------------------
 
-  const LONDON_PARTS = typeof Intl !== 'undefined'
-    ? new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    : null;
-
-  /** Offset of Europe/London from UTC at this instant, in ms (0 in winter, 3 600 000 in summer). */
-  function londonOffsetMs(utcMs) {
-    if (!LONDON_PARTS) return 0;
-    const p = {};
-    for (const part of LONDON_PARTS.formatToParts(new Date(utcMs))) p[part.type] = Number(part.value);
-    const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour % 24, p.minute, p.second);
-    return asUtc - Math.floor(utcMs / 1000) * 1000;
-  }
-
-  /**
-   * "19:18:22 27/09/2026" (SWR's UpdatedTime, London local time) → Date. Also takes "19:18 27/09/2026"
-   * and ISO strings. Returns null when it can't be read.
-   */
-  function parseSwrDateTime(text) {
-    const s = clean(text);
-    if (!s) return null;
-    const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?\s+(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
-    if (m) {
-      const [h, mi, sec, d, mo, y] = [m[1], m[2], m[3] || '0', m[4], m[5], m[6]].map(Number);
-      if (h > 23 || mi > 59 || sec > 59 || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
-      const guess = Date.UTC(y, mo - 1, d, h, mi, sec);
-      const first = guess - londonOffsetMs(guess);
-      return new Date(guess - londonOffsetMs(first));
-    }
-    if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
-      const t = Date.parse(s);
-      return Number.isNaN(t) ? null : new Date(t);
-    }
-    return null;
-  }
-
   const INCIDENT_COLOURS = {
     'code red': { severity: 'major', cls: 'critical', label: 'Major disruption' },
     'code amber': { severity: 'moderate', cls: 'serious', label: 'Disruption' },
@@ -282,7 +245,7 @@
         summary: summary || 'Service update',
         detailsHtml,
         furtherInfoHtml: String(u.FurtherInfo || '').trim(),
-        updated: parseSwrDateTime(u.UpdatedTime),
+        updated: A.parseUkTime(u.UpdatedTime),
         updatedText: clean(u.UpdatedTime) || null,
         colour,
         severity: sev.severity,
@@ -301,7 +264,7 @@
 
   const roughText = (html) => clean(String(html).replace(/<[^>]*>/g, ' ').replace(/&nbsp;|&#160;/gi, ' ')).toLowerCase();
 
-  /** Huxley departures → [{html}] (raw HTML, for htmlParagraphs at render time), blanks and repeats dropped. */
+  /** Huxley departures → [{html}] (raw HTML, for paragraphsOf at render time), blanks and repeats dropped. */
   function normalizeNrccMessages(huxley) {
     const list = huxley && Array.isArray(huxley.nrccMessages) ? huxley.nrccMessages : [];
     const seen = new Set();
@@ -334,22 +297,6 @@
   // ---------------------------------------------------------------------------
 
   /**
-   * An https link to an allowed host, or null. Repairs "http://https://…" and upgrades http:// on those hosts.
-   */
-  function safeHref(href) {
-    let s = String(href == null ? '' : href).trim().replace(/&amp;/g, '&');
-    s = s.replace(/^https?:\/\/(?=https?:\/\/)/i, '');
-    let u;
-    try { u = new URL(s); } catch (e) { return null; }
-    if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
-    const host = u.hostname.toLowerCase();
-    if (!LINK_HOSTS.some((h) => host === h || host.endsWith('.' + h))) return null;
-    if (u.username || u.password) return null;
-    u.protocol = 'https:';
-    return u.href;
-  }
-
-  /**
    * TfL status for south-western-railway → {cls, description, reasons: [text], links: [{text, href}]}.
    * Takes the Map from TflApi's getLineStatuses(), the raw /Line/…/Status array, or one normalised entry.
    * A reason that is only a URL (as on 2026-09-27) becomes a "National Rail details" link.
@@ -368,7 +315,7 @@
       const text = clean(r);
       if (!text) continue;
       if (/^\S+$/.test(text) && /^(https?:\/\/|www\.)/i.test(text)) {
-        const href = safeHref(/^www\./i.test(text) ? 'https://' + text : text);
+        const href = A.safeHref(text.replace(/^(?:http:\/\/)?(?=www\.)/i, 'https://').replace(/^http:\/\//i, 'https://'));
         const label = /nationalrail\.co\.uk/i.test(href || '') ? 'National Rail details' : 'More details';
         if (href && !links.some((l) => l.href === href)) links.push({ text: label, href });
         else if (!href) reasons.push(text);
@@ -378,80 +325,28 @@
   }
 
   // ---------------------------------------------------------------------------
-  // HTML → paragraphs (the one adapter onto SwrApi.htmlToText)
+  // HTML → paragraphs: the one adapter onto SwrApi
   // ---------------------------------------------------------------------------
 
-  const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ndash: '–', mdash: '—', pound: '£', rsquo: '’', lsquo: '‘', rdquo: '”', ldquo: '“', hellip: '…' };
-  function decodeEntities(s) {
-    return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
-      if (e[0] === '#') {
-        const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
-        return Number.isFinite(code) && code > 0 && code < 0x110000 ? String.fromCodePoint(code) : '';
-      }
-      const v = ENTITIES[e.toLowerCase()];
-      return v === undefined ? m : v;
-    });
-  }
-
-  /** Regex fallback for Node and for before SwrApi.htmlToText exists → [{text, links: [{text, href}]}]. */
-  function fallbackHtmlToText(html) {
-    const src = String(html == null ? '' : html)
-      .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
-      .replace(/<!--[\s\S]*?-->/g, ' ');
-    const chunks = src.split(/(?:<br\s*\/?>\s*){2,}|<\/?(?:p|div|ul|ol|h[1-6])\b[^>]*>|<\/li\s*>/i);
-    const out = [];
-    for (const chunk of chunks) {
-      const links = [];
-      const withText = chunk.replace(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi, (m, attrs, inner) => {
-        const hm = /\bhref\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(attrs);
-        const label = clean(decodeEntities(inner.replace(/<[^>]*>/g, ' ')));
-        const href = hm ? safeHref(decodeEntities(hm[2] ?? hm[3] ?? hm[4] ?? '')) : null;
-        if (href) links.push({ text: label || href, href });
-        return label;
-      });
-      const text = decodeEntities(withText.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, ''))
-        .split('\n').map((line) => line.replace(/[ \t \r\f\v]+/g, ' ').trim()).filter(Boolean).join('\n');
-      if (text || links.length) out.push({ text, links });
+  /**
+   * Untrusted HTML → SwrApi.htmlToText paragraphs [{text, parts, links}] (links already limited to safe
+   * https hosts). Rendered later with SwrApi.renderParagraphs. [] when there's nothing or it can't be read.
+   */
+  function paragraphsOf(html) {
+    if (!A || typeof A.htmlToText !== 'function') return [];
+    try {
+      const out = A.htmlToText(html);
+      return Array.isArray(out) ? out.filter((p) => p && String(p.text || '').trim()) : [];
+    } catch (e) {
+      return [];
     }
-    return out;
-  }
-
-  /** Accepts whatever htmlToText returns (string, [string] or [{text, links}]) → [{text, links: [{text, href}]}]. */
-  function adaptParagraphs(result) {
-    let list = result;
-    if (typeof list === 'string') list = list.split(/\n\s*\n/);
-    if (!Array.isArray(list)) return [];
-    const out = [];
-    for (const p of list) {
-      const para = typeof p === 'string' ? { text: p, links: [] } : p && typeof p === 'object' ? p : null;
-      if (!para) continue;
-      const text = String(para.text == null ? '' : para.text).trim();
-      const links = [];
-      for (const l of Array.isArray(para.links) ? para.links : []) {
-        const href = l && safeHref(l.href);
-        if (href && !links.some((x) => x.href === href)) links.push({ text: clean(l.text) || href, href });
-      }
-      if (text || links.length) out.push({ text, links });
-    }
-    return out;
-  }
-
-  /** Untrusted HTML → safe paragraphs. Uses SwrApi.htmlToText when S0 provides it. */
-  function htmlParagraphs(html) {
-    const swr = root.SwrApi;
-    if (swr && typeof swr.htmlToText === 'function') {
-      try {
-        return adaptParagraphs(swr.htmlToText(html));
-      } catch (e) {
-        /* fall through to the local parser */
-      }
-    }
-    return adaptParagraphs(fallbackHtmlToText(html));
   }
 
   // ---------------------------------------------------------------------------
-  // Rendering (pure: state in, HTML string out; every API string escaped)
+  // Rendering (pure: state in, {html, blocks} out; every API string escaped)
   // ---------------------------------------------------------------------------
+  // API HTML never goes into the string: each block of paragraphs gets an empty
+  // <div data-para="i"> slot, filled with SwrApi.renderParagraphs(blocks[i]) after the HTML is set.
 
   function fmtClock(date) {
     return date.toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
@@ -471,19 +366,21 @@
     return `${Math.round(minutes / 1440)} days ago`;
   }
 
+  /** Escaped text that may wrap after "/" ("Reading/Windsor Lines" rather than "Reading/Windso r Lines"). */
+  function escWrap(text, esc) {
+    return esc(text).replace(/\//g, '/<wbr>');
+  }
+
   function pill(cls, text, esc, extra) {
     return `<span class="status status-${cls}${extra ? ' ' + extra : ''}"><span class="status-icon" aria-hidden="true">${STATUS_ICONS[cls] || STATUS_ICONS.info}</span>${esc(text)}</span>`;
   }
 
-  function linkHtml(l, esc) {
-    return `<a href="${esc(l.href)}" target="_blank" rel="noopener noreferrer">${esc(l.text.replace(/[.\s]+$/, '') || l.href)}</a>`;
-  }
-
-  function paragraphsHtml(paras, esc) {
-    return paras.map((p) => {
-      const links = p.links.length ? ` <span class="swr-st-links">${p.links.map((l) => linkHtml(l, esc)).join(' · ')}</span>` : '';
-      return `<p>${esc(p.text)}${links}</p>`;
-    }).join('');
+  /** A slot for paragraphs from untrusted HTML, or '' when there are none. */
+  function paraSlot(html, out) {
+    const paras = paragraphsOf(html);
+    if (!paras.length) return '';
+    out.blocks.push(paras);
+    return `<div class="swr-st-paras" data-para="${out.blocks.length - 1}"></div>`;
   }
 
   function headlineHtml(state, incidents, esc) {
@@ -491,64 +388,79 @@
     let tfl;
     if (h) {
       const reasons = h.reasons.map((r) => `<p class="swr-st-reason">${esc(r)}</p>`).join('');
-      const links = h.links.length ? `<p class="swr-st-reason">${h.links.map((l) => linkHtml(l, esc)).join(' · ')}</p>` : '';
+      // h.links hrefs have been through SwrApi.safeHref.
+      const links = h.links.length
+        ? `<p class="swr-st-reason">${h.links.map((l) => `<a href="${esc(l.href)}" target="_blank" rel="noopener noreferrer">${esc(l.text)}</a>`).join(' · ')}</p>`
+        : '';
       tfl = `<div class="swr-st-headrow">${pill(h.cls, h.description, esc)}<span class="swr-st-src">TfL, live${state.headlineError ? ' (latest refresh failed)' : ''}</span></div>${reasons}${links}`;
     } else if (state.headlineError) {
       tfl = `<div class="swr-st-headrow">${pill('info', 'Status unavailable', esc)}<span class="swr-st-src">TfL didn't respond: ${esc(state.headlineError.message || state.headlineError)}</span></div>`;
     } else {
-      tfl = `<div class="swr-st-headrow"><span class="swr-st-src">Loading status from TfL…</span></div>`;
+      tfl = '<div class="swr-st-headrow"><span class="swr-st-src">Loading status from TfL…</span></div>';
     }
     let swr = '';
     if (incidents && (incidents.statusLabel || incidents.summary)) {
-      const label = incidents.statusLabel || 'Status';
-      swr = `<div class="swr-st-headrow">${pill(incidents.cls, label, esc)}<span class="swr-st-src">SWR website, snapshot</span></div>`
+      swr = `<div class="swr-st-headrow">${pill(incidents.cls, incidents.statusLabel || 'Status', esc)}<span class="swr-st-src">SWR website, snapshot</span></div>`
         + (incidents.summary ? `<p class="swr-st-reason">${esc(incidents.summary)}</p>` : '');
     }
     return `<div class="card swr-st-headline"><h3 class="card-title">South Western Railway</h3>${tfl}${swr}</div>`;
   }
 
-  function groupsHtml(groups, esc) {
+  /** "2 major disruption, 1 planned closure, 4 good service" (worst first, as the groups are sorted). */
+  function groupCounts(groups) {
+    const counts = new Map();
+    for (const g of groups) {
+      const label = (g.statusText || 'status unknown').toLowerCase();
+      counts.set(label, (counts.get(label) || 0) + 1);
+    }
+    return [...counts].map(([label, n]) => `${n} ${label}`).join(', ');
+  }
+
+  /**
+   * The route groups sit in one disclosure: open before a station is chosen, closed after (so the station's
+   * own sections aren't pushed far down on a phone), unless the viewer has opened or closed it themselves.
+   */
+  function groupsHtml(groups, esc, open) {
     if (!groups.length) return '<p class="muted small">The snapshot has no route status.</p>';
-    return `<ul class="swr-st-groups">${groups.map((g) => {
+    return `<details class="swr-st-routes"${open ? ' open' : ''}><summary><span class="swr-st-routes-count">${esc(groupCounts(groups))}</span><span class="swr-st-hint">${groups.length} route groups; open one to see each service</span></summary><ul class="swr-st-groups">${groups.map((g) => {
       const key = 'grp-' + normKey(g.name).replace(/[^a-z0-9]+/g, '-');
-      const hint = g.rows.length
-        ? g.disrupted
-          ? `${g.disrupted} of ${g.rows.length} ${g.rows.length === 1 ? 'service' : 'services'} not running normally`
-          : `${g.rows.length} ${g.rows.length === 1 ? 'service' : 'services'}, all good service`
-        : 'No details by service';
+      const n = g.rows.length;
+      const noun = n === 1 ? 'service' : 'services';
+      const hint = n ? (g.disrupted ? `${g.disrupted} of ${n} ${noun} not running normally` : `${n} ${noun}, all good service`) : 'No details by service';
       const rows = g.rows.map((r) => `<li class="swr-st-row">
-          <div class="swr-st-rowtop"><span class="swr-st-dir">${esc(r.description)}</span>${pill(r.cls, r.statusText, esc, 'swr-st-small')}</div>
+          <div class="swr-st-rowtop"><span class="swr-st-dir">${escWrap(r.description, esc)}</span>${pill(r.cls, r.statusText, esc, 'swr-st-small')}</div>
           ${r.incident ? `<p class="swr-st-incident-text">${esc(r.incident)}</p>` : ''}</li>`).join('');
-      const head = `<span class="swr-st-gname">${esc(g.name)}</span>${pill(g.cls, g.statusText || 'Status unknown', esc)}<span class="swr-st-hint">${esc(hint)}</span>`;
-      return `<li>${g.rows.length
+      const head = `<span class="swr-st-gname">${escWrap(g.name, esc)}</span>${pill(g.cls, g.statusText || 'Status unknown', esc)}<span class="swr-st-hint">${esc(hint)}</span>`;
+      return `<li>${n
         ? `<details class="swr-st-group" data-key="${esc(key)}"><summary>${head}</summary><ul class="swr-st-rows">${rows}</ul></details>`
         : `<div class="swr-st-group swr-st-norows"><div class="swr-st-ghead">${head}</div></div>`}</li>`;
-    }).join('')}</ul>`;
+    }).join('')}</ul></details>`;
   }
 
-  function incidentsHtml(incidents, now, esc) {
+  function incidentsHtml(incidents, now, out) {
+    const esc = out.esc;
     if (!incidents.incidents.length) return '<p class="muted small">SWR lists no incidents.</p>';
     return `<ul class="swr-st-incidents">${incidents.incidents.map((i, n) => {
-      const details = htmlParagraphs(i.detailsHtml);
-      const further = htmlParagraphs(i.furtherInfoHtml);
       const when = i.updated ? `Updated ${fmtWhen(i.updated, now)}` : i.updatedText ? `Updated ${i.updatedText}` : '';
-      const body = (details.length ? paragraphsHtml(details, esc) : '<p class="muted">No further details.</p>')
-        + (further.length ? `<h4 class="swr-st-more">More information</h4>${paragraphsHtml(further, esc)}` : '');
+      const details = paraSlot(i.detailsHtml, out) || '<p class="muted">No further details.</p>';
+      const further = paraSlot(i.furtherInfoHtml, out);
       return `<li><details class="swr-st-incident" data-key="${esc('inc-' + (i.id || n))}">
           <summary>${pill(i.cls, i.severityLabel, esc)}<span class="swr-st-isum">${esc(i.summary)}</span>${when ? `<span class="swr-st-hint">${esc(when)}</span>` : ''}</summary>
-          <div class="swr-st-body">${body}</div></details></li>`;
+          <div class="swr-st-body">${details}${further ? `<h4 class="swr-st-more">More information</h4>${further}` : ''}</div></details></li>`;
     }).join('')}</ul>`;
   }
 
-  function messagesHtml(state, esc) {
+  function messagesHtml(state, out) {
+    const esc = out.esc;
     const name = state.station ? state.station.name || state.station.crs : '';
     const title = `<h3 class="swr-st-sub">National Rail messages for ${esc(name)}</h3>`;
     if (state.messages === null && state.messagesError) {
       return `${title}<p class="muted small">Station messages are unavailable: Huxley2 didn't respond.</p>`;
     }
     if (state.messages === null) return `${title}<p class="muted small">Loading station messages…</p>`;
-    if (!state.messages.length) return `${title}<p class="muted small">No National Rail messages for this station.</p>`;
-    return `${title}<ul class="swr-st-messages">${state.messages.map((m) => `<li class="swr-st-message">${paragraphsHtml(htmlParagraphs(m.html), esc)}</li>`).join('')}</ul>`;
+    const items = state.messages.map((m) => paraSlot(m.html, out)).filter(Boolean);
+    if (!items.length) return `${title}<p class="muted small">No National Rail messages for this station.</p>`;
+    return `${title}<ul class="swr-st-messages">${items.map((slot) => `<li class="swr-st-message">${slot}</li>`).join('')}</ul>`;
   }
 
   function aboutHtml(age, snapshotMissing, now, esc) {
@@ -564,11 +476,14 @@
   }
 
   /**
-   * state: {headline, headlineError, snapshot, snapshotLoaded, station, messages, messagesError}
-   * (snapshot is the parsed status.json or null). → HTML for #swr-status.
+   * state: {headline, headlineError, snapshot, snapshotLoaded, station, messages, messagesError,
+   *        routesOpen: true|false (the viewer's choice) | null}
+   * (snapshot is the parsed status.json or null) → {html, blocks}: the HTML for #swr-status, and the
+   * paragraphs for each of its [data-para] slots.
    */
-  function renderStatusHtml(state, now, escFn) {
+  function renderStatus(state, now, escFn) {
     const esc = escFn || escHtml;
+    const out = { esc, blocks: [] };
     const nowDate = now instanceof Date ? now : new Date(now == null ? Date.now() : now);
     const snap = state.snapshot && typeof state.snapshot === 'object' ? state.snapshot : null;
     const snapshotMissing = state.snapshotLoaded && !snap;
@@ -577,28 +492,28 @@
     const age = snapshotAge(snap && snap.fetchedAt, nowDate);
 
     let html = `<h2 class="section-title">Service status</h2>${headlineHtml(state, incidents, esc)}`;
-
     if (snap) {
       const asOf = age.date ? `Snapshot of SWR's website as of ${fmtWhen(age.date, nowDate)} (${fmtAge(age.minutes)}).` : "Snapshot of SWR's website, time unknown.";
       const stale = age.stale ? `<p class="swr-st-stale">${pill('warning', 'May be out of date', esc)} <span>SWR's own status may have changed since then.</span></p>` : '';
       const failed = snap.errors && typeof snap.errors === 'object' ? Object.keys(snap.errors) : [];
       const failedNote = failed.length ? `<p class="muted small">Missing from this snapshot: ${esc(failed.join(', '))}.</p>` : '';
-      html += `<h3 class="swr-st-sub">Status by route group</h3><p class="muted small swr-st-asof">${esc(asOf)} Open a group to see each service.</p>${stale}${failedNote}`;
-      html += groupsHtml(groups, esc);
-      if (incidents) html += `<h3 class="swr-st-sub">Incidents</h3>${incidentsHtml(incidents, nowDate, esc)}`;
+      html += `<h3 class="swr-st-sub">Status by route group</h3><p class="muted small swr-st-asof">${esc(asOf)}</p>${stale}${failedNote}`;
+      const routesOpen = typeof state.routesOpen === 'boolean' ? state.routesOpen : !state.station;
+      html += groupsHtml(groups, esc, routesOpen);
+      if (incidents) html += `<h3 class="swr-st-sub">Incidents</h3>${incidentsHtml(incidents, nowDate, out)}`;
     } else if (snapshotMissing) {
-      html += `<p class="swr-st-nosnap muted small">Status by route group and SWR's incident details aren't available here. They come from a snapshot of SWR's website that this site publishes; it's missing when the page is opened from disk or before snapshots are set up.</p>`;
+      html += '<p class="swr-st-nosnap muted small">Status by route group and SWR\'s incident details aren\'t available here. They come from a snapshot of SWR\'s website that this site publishes; it\'s missing when the page is opened from disk or before snapshots are set up.</p>';
     } else {
       html += '<p class="muted small">Loading SWR route status…</p>';
     }
-
-    if (state.station) html += messagesHtml(state, esc);
+    if (state.station) html += messagesHtml(state, out);
     html += aboutHtml(age, snapshotMissing || !snap, nowDate, esc);
-    return html;
+    return { html, blocks: out.blocks };
   }
 
   // ---------------------------------------------------------------------------
-  // Demo fixture: data/swr/status.json in the S7 snapshot format, from real samples (2026-09-27, trimmed)
+  // Demo fixtures (real samples from 2026-09-27, trimmed): data/swr/status.json in the S7 snapshot
+  // format, and TfL's status for the line (the TfL demo data only has a generic "Good Service")
   // ---------------------------------------------------------------------------
 
   // GET https://www.southwesternrailway.com/api/LiveInformationBoard (all 13 groups, 2026-09-27 19:20 BST)
@@ -670,10 +585,37 @@
     ],
   };
 
+  // GET https://api.tfl.gov.uk/Line/south-western-railway/Status (trimmed)
+  const DEMO_TFL_STATUS = [{
+    $type: 'Tfl.Api.Presentation.Entities.Line, Tfl.Api.Presentation.Entities',
+    id: 'south-western-railway',
+    name: 'South Western Railway',
+    modeName: 'national-rail',
+    disruptions: [],
+    lineStatuses: [{
+      id: 0,
+      lineId: 'south-western-railway',
+      statusSeverity: 0,
+      statusSeverityDescription: 'Special Service',
+      reason: 'https://www.nationalrail.co.uk/service-disruptions/overton-20260327/',
+      validityPeriods: [],
+      disruption: {
+        category: 'Information',
+        categoryDescription: 'Information',
+        description: 'https://www.nationalrail.co.uk/service-disruptions/overton-20260327/',
+        additionalInfo: 'Custom',
+        affectedRoutes: [],
+        affectedStops: [],
+      },
+    }],
+    routeSections: [],
+  }];
+
+  /** "HH:MM:SS DD/MM/YYYY" in London time, the format of SWR's UpdatedTime. */
   function londonStamp(date) {
-    if (!LONDON_PARTS) return '';
     const p = {};
-    for (const part of LONDON_PARTS.formatToParts(date)) p[part.type] = part.value;
+    const fmt = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    for (const part of fmt.formatToParts(date)) p[part.type] = part.value;
     return `${p.hour}:${p.minute}:${p.second} ${p.day}/${p.month}/${p.year}`;
   }
 
@@ -696,9 +638,15 @@
     };
   }
 
-  /** SwrApi.demoRoutes entry: answers data/swr/status.json, nothing else. */
+  /**
+   * SwrApi.demoRoutes entry: answers data/swr/status.json and TfL's /Line/south-western-railway/Status
+   * (ctx.tfl asks demoRoutes first in ?demo). Huxley's nrccMessages come from S1's Huxley route.
+   */
   function demoRoute(url) {
-    return /(^|\/)data\/swr\/status\.json(?:[?#]|$)/.test(String(url)) ? demoStatusSnapshot() : null;
+    const u = String(url);
+    if (/(^|\/)data\/swr\/status\.json(?:[?#]|$)/.test(u)) return demoStatusSnapshot();
+    if (/^https:\/\/api\.tfl\.gov\.uk\/Line\/south-western-railway\/Status(?:[?#]|$)/i.test(u)) return JSON.parse(JSON.stringify(DEMO_TFL_STATUS));
+    return null;
   }
 
   // ---------------------------------------------------------------------------
@@ -707,7 +655,6 @@
 
   const ctl = {
     ctx: null,
-    token: null,
     station: null,
     headline: null,
     headlineError: null,
@@ -715,11 +662,12 @@
     headlineSeq: 0,
     snapshot: null,
     snapshotLoaded: false,
-    snapshotAt: 0,
     snapshotSeq: 0,
     messages: null,
     messagesError: null,
     messagesCrs: null,
+    routesOpen: null, // the viewer opened (true) or closed (false) the route groups; null: not yet
+    listening: false,
   };
 
   function render() {
@@ -730,9 +678,26 @@
     const open = new Set([...box.querySelectorAll('details[open][data-key]')].map((d) => d.dataset.key));
     const aboutOpen = !!box.querySelector('details.swr-st-about[open]');
     const esc = (ctl.ctx && ctl.ctx.esc) || escHtml;
-    box.innerHTML = renderStatusHtml(ctl, new Date(), esc);
+    if (!ctl.listening) {
+      ctl.listening = true;
+      // Remember the viewer's own choice for the route-group list (a click on its summary, or Enter/Space).
+      box.addEventListener('click', (e) => {
+        const summary = e.target.closest('summary');
+        const details = summary && summary.parentElement;
+        if (details && details.classList.contains('swr-st-routes')) ctl.routesOpen = !details.open;
+      });
+    }
+    const { html, blocks } = renderStatus(ctl, new Date(), esc);
+    box.innerHTML = html; // every API string in it is escaped; API HTML goes through renderParagraphs below
+    for (const slot of box.querySelectorAll('[data-para]')) {
+      const paras = blocks[Number(slot.dataset.para)];
+      if (paras) slot.replaceChildren(A.renderParagraphs(paras));
+    }
     for (const d of box.querySelectorAll('details[data-key]')) if (open.has(d.dataset.key)) d.open = true;
-    if (aboutOpen) { const a = box.querySelector('details.swr-st-about'); if (a) a.open = true; }
+    if (aboutOpen) {
+      const a = box.querySelector('details.swr-st-about');
+      if (a) a.open = true;
+    }
     box.hidden = false;
   }
 
@@ -752,31 +717,29 @@
     render();
   }
 
+  /** SwrApi.snapshot caches for 60 s and returns null on any failure (and from file:). */
   async function loadSnapshot(ctx) {
-    if (!ctx || !ctx.api || typeof ctx.api.snapshot !== 'function') {
-      ctl.snapshotLoaded = true;
-      return;
-    }
     const seq = ++ctl.snapshotSeq;
     let snap = null;
-    try { snap = await ctx.api.snapshot('status.json'); } catch (e) { snap = null; }
+    try { snap = ctx && ctx.api ? await ctx.api.snapshot('status.json') : null; } catch (e) { snap = null; }
     if (seq !== ctl.snapshotSeq) return;
     const usable = snap && typeof snap === 'object' && (snap.overallstatus || snap.liveInformationBoard || snap.rainbowBoard);
     if (usable || !ctl.snapshot) ctl.snapshot = usable ? snap : null; // a failed refresh keeps the last good one
     ctl.snapshotLoaded = true;
-    ctl.snapshotAt = Date.now();
     render();
   }
 
-  async function loadMessages(ctx, station, token) {
-    if (!ctx || !ctx.api || typeof ctx.api.huxleyDepartures !== 'function' || !station || !station.crs) return;
+  /** Station messages; dropped when the station has changed since this ctx was made. */
+  async function loadMessages(ctx, station) {
+    if (!ctx || !ctx.api || !station || !station.crs) return;
+    const stale = () => (typeof ctx.isStale === 'function' ? ctx.isStale() : ctx !== ctl.ctx) || !ctl.station || ctl.station.crs !== station.crs;
     try {
       const huxley = await ctx.api.huxleyDepartures(station.crs);
-      if (token !== ctl.token || !ctl.station || ctl.station.crs !== station.crs) return;
+      if (stale()) return;
       ctl.messages = normalizeNrccMessages(huxley);
       ctl.messagesError = null;
     } catch (e) {
-      if (token !== ctl.token || !ctl.station || ctl.station.crs !== station.crs) return;
+      if (stale()) return;
       ctl.messagesError = e; // keep the last good messages for this station
     }
     render();
@@ -784,17 +747,16 @@
 
   function load(force) {
     const ctx = ctl.ctx;
-    const now = Date.now();
     const jobs = [];
-    if (force || now - ctl.headlineAt > HEADLINE_TTL_MS) jobs.push(loadHeadline(ctx));
-    if (force || now - ctl.snapshotAt > SNAPSHOT_TTL_MS) jobs.push(loadSnapshot(ctx));
-    if (ctl.station) jobs.push(loadMessages(ctx, ctl.station, ctl.token));
+    if (force || Date.now() - ctl.headlineAt > HEADLINE_TTL_MS) jobs.push(loadHeadline(ctx));
+    jobs.push(loadSnapshot(ctx));
+    if (ctl.station) jobs.push(loadMessages(ctx, ctl.station));
     return Promise.all(jobs);
   }
 
   function setContext(station, ctx) {
-    ctl.ctx = ctx || ctl.ctx;
-    ctl.token = ctx ? ctx.token : ctl.token;
+    if (ctx) ctl.ctx = ctx;
+    if (station === undefined) return;
     const crs = station && station.crs ? station.crs : null;
     if (crs !== ctl.messagesCrs) {
       ctl.messages = null;
@@ -806,7 +768,13 @@
 
   const moduleDef = {
     id: 'status',
-    /** A station was chosen (or null before one is): the headline shows either way. */
+    /** Once, when the SWR tab first opens: the headline and snapshot show before a station is chosen. */
+    init(ctx) {
+      setContext(undefined, ctx);
+      render();
+      return load(false);
+    },
+    /** A station was chosen: add its National Rail messages. */
     onStation(station, ctx) {
       setContext(station, ctx);
       render();
@@ -829,17 +797,13 @@
     routeStatusClass,
     normalizeRainbowRows,
     normalizeRouteGroups,
-    parseSwrDateTime,
     humanizeStatus,
     normalizeIncidents,
     normalizeNrccMessages,
     snapshotAge,
-    safeHref,
     swrHeadline,
-    fallbackHtmlToText,
-    adaptParagraphs,
-    htmlParagraphs,
-    renderStatusHtml,
+    paragraphsOf,
+    renderStatus,
     demoStatusSnapshot,
     demoRoute,
     module: moduleDef,

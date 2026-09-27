@@ -20,6 +20,18 @@
   overflow: hidden;
 }
 .swr-st-groups > li + li { border-top: 1px solid var(--gridline); }
+
+/* The whole list folds into one line (counts per status) once a station is chosen. */
+.swr-st-routes > summary {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; cursor: pointer; list-style: none;
+  padding: 8px 14px; margin-bottom: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-1);
+}
+.swr-st-routes > summary::-webkit-details-marker { display: none; }
+.swr-st-routes > summary::before { content: "▸"; flex: none; width: 1em; color: var(--text-muted); transition: transform 0.15s; }
+.swr-st-routes[open] > summary::before { transform: rotate(90deg); }
+.swr-st-routes > summary:hover { background: var(--surface-2); }
+.swr-st-routes-count { font-size: 14px; font-weight: 600; flex: 1 1 14em; min-width: 0; }
+.swr-st-routes > summary .swr-st-hint { flex: 1 1 100%; }
 .swr-st-group > summary, .swr-st-ghead, .swr-st-incident > summary {
   display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 10px 14px; min-width: 0;
 }
@@ -31,6 +43,7 @@
 }
 .swr-st-group[open] > summary::before, .swr-st-incident[open] > summary::before { transform: rotate(90deg); }
 .swr-st-ghead { padding-left: calc(14px + 1em + 10px); }
+.swr-st-group .status, .swr-st-incident > summary .status, .swr-st-rowtop .status { flex: none; }
 .swr-st-group > summary:hover, .swr-st-incident > summary:hover { background: var(--surface-2); }
 .swr-st-gname { font-weight: 600; font-size: 14px; flex: 1 1 8em; min-width: 0; overflow-wrap: break-word; }
 .swr-st-hint { font-size: 12px; color: var(--text-secondary); flex: 1 1 100%; padding-left: calc(1em + 10px); }
@@ -47,10 +60,9 @@
 .swr-st-incident { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
 .swr-st-isum { font-weight: 600; font-size: 14px; flex: 1 1 12em; min-width: 0; overflow-wrap: break-word; }
 .swr-st-body { padding: 0 14px 12px calc(14px + 1em + 10px); max-width: 90ch; }
-.swr-st-body p, .swr-st-message p { margin: 8px 0 0; font-size: 13px; white-space: pre-line; overflow-wrap: anywhere; }
+.swr-st-body p, .swr-st-message p { margin: 8px 0 0; font-size: 13px; overflow-wrap: anywhere; }
 .swr-st-body p { color: var(--text-secondary); }
 .swr-st-more { margin: 12px 0 0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
-.swr-st-links { white-space: normal; }
 
 /* National Rail station messages (Huxley2). */
 .swr-st-messages { display: flex; flex-direction: column; gap: 8px; }
