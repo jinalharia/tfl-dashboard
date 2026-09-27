@@ -21,9 +21,26 @@ Live site: https://jinalharia.github.io/tfl-dashboard/. Until the repo owner swi
 | — | Deploy only when tests pass (GitHub Actions) | ✅ Done (package D); owner must switch the Pages source | D |
 | — | Boarding estimate: trains you may need to let go before boarding | ✅ Done (package E) | E |
 
+**South Western Railway tab** (details in [South Western Railway tab](#south-western-railway-tab-packages-s0s7)):
+
+| # | Addition | Status | Package |
+|---|---|---|---|
+| SWR-9 | Tab bar (TfL / SWR), SWR station picker, shared SWR client | ⬜ Not started | S0 |
+| SWR-3 | Live SWR departures board | ⬜ Not started | S1 |
+| SWR-1 | Train length on each departure, short-train warning | ⬜ Not started | S1 |
+| SWR-7 | Delay and cancellation reasons on each departure | ⬜ Not started | S1 |
+| SWR-8 | Where is my train (calling points) | ⬜ Not started | S2 |
+| SWR-4 | SWR overall status (headline) | ⬜ Not started | S3 |
+| SWR-5 | Status by route group | ⬜ Not started | S3 |
+| SWR-6 | Incident details (ticket acceptance, replacement buses) | ⬜ Not started | S3 |
+| SWR-2 | Typical busyness per morning train into Waterloo | ⬜ Not started | S4 |
+| SWR-10 | SWR planned closures, next 14 days (investigate first) | ⬜ Not started | S5 |
+| SWR-11 | Station punctuality and cancellations | ⬜ Not started | S6 |
+| — | Scheduled snapshots of SWR data that browsers can't fetch directly | ⬜ Not started | S7 |
+
 **Note on #1.** The proposal was "entry/exit footfall", but TfL's `passengerFlows` are about 10 *unlabelled* values per 15-minute slice, so they can't be split into entries and exits. What shipped is **typical passenger flow per line**: the per-slice sum, charted on each line card. TfL gives one profile for all days and it follows a weekday pattern, so the card says so at weekends.
 
-**Out of scope** (considered and rejected: they don't help someone deciding whether a station is too busy): air quality, road disruptions, car parks, accident stats.
+**Out of scope** (considered and rejected: they don't help someone deciding whether a station is too busy): air quality, road disruptions, car parks, accident stats. For SWR, also: other train operators' status, an A-to-B journey planner, and the clickable network map from `/api/sitecore/Interactive/GetDesktopView` (a 1.3 MB HTML/SVG fragment, not data).
 
 ## Work packages
 
@@ -137,6 +154,224 @@ Notes from building it:
 - Calibrate the 30% alighting assumption per station using `passengerFlows`, once its values can be identified.
 - Use live gaps between predicted trains, instead of only the first train's wait, for the service factor.
 - On branching lines, weight previous stations by frequency instead of taking the fullest.
+
+## South Western Railway tab (packages S0–S7)
+
+Everything about South Western Railway (SWR) goes on its own **SWR** tab. The existing page becomes the **TfL** tab and keeps working unchanged. Items are numbered SWR-1 to SWR-11, following the list of ideas agreed on 2026-09-27.
+
+### Who can start when
+
+```
+Start now:          S0 tab shell + stations      S7 snapshots pipeline
+Start now, but wire  S1 departures ─┬─ S2 calling points (listens to S1's event)
+into the page only   S3 status      │
+after S0 is merged:  S4 seats  S5 closures (investigate first)  S6 performance
+                     S3, S4, S6 use demo fixtures until S7 publishes data
+```
+
+- **S0 and S7 start straight away.** S0 is kept small so it merges first.
+- **S1 to S6 can start at the same time.** Each begins with its pure helpers, test fixtures and unit tests, which don't need S0. Merge `main` in once S0 is there, then wire up the page.
+- **S3, S4 and S6** read files that S7 publishes. Until S7 is merged, build and test them against the demo fixtures and the file formats in [the S7 contract](#snapshot-file-formats-s7-writes-s3-s4-s6-read).
+- **S2** attaches to S1's departure rows through an event (see [the S0 contract](#what-s0-provides-the-contract-for-s1s6)). It can be built against a fake event and checked end to end once S1 is merged.
+- **One file set per package** keeps parallel PRs from conflicting. S0 creates an empty stub for every package's JS and CSS file and adds its `<script>`/`<link>` tag and its `<section>` to `index.html`. From then on, a package edits only its own files, apart from appending rows to the README endpoint table and this file's status table. When those two conflict, keep both sides.
+
+### SWR data sources (all checked on 2026-09-27)
+
+Browsers can call only sources that send `Access-Control-Allow-Origin`. The others go through S7's snapshots.
+
+| Source | Endpoint | CORS | What it gives |
+|---|---|---|---|
+| SWR live train info | `GET https://railinfo.southwesternrailway.com/journey/departures/{CRS}` (also `/arrivals/{CRS}`) | ✅ `*` | `{Station{Name,CrsCode}, GeneratedAt, Items[], BusItems[]}`. Each item: `Id` (e.g. `9138693WATRLMN_`), `Operator`, `Platform` (may be `null`), `ScheduledTime` `"19:21"`, `EstimatedTime` (`"On time"`, `"19:45"`, `"Cancelled"`, `"Delayed"`), `Origin`/`Destination {Name, CrsCode}`. Takes the **CRS code** only: `/departures/Surbiton` returned 500. Clapham Junction returned 100 items from 3 operators (60 SWR, 32 Southern, 8 London Overground). `BusItems` (replacement buses) was empty on the day. |
+| SWR calling points | `POST https://railinfo.southwesternrailway.com/journey/services` with body `{"ServiceId": "<Id>"}` | ✅ `*` | `{Platform, ScheduledDeparture, ActualDeparture, GeneratedAt, LastLocation, CallingPoints[{Station{Name,CrsCode}, ScheduledTime, EstimatedTime, ActualTime, IsVisited}]}` |
+| Huxley2 (community JSON wrapper for National Rail's live train data) | `GET https://huxley2.azurewebsites.net/departures/{CRS}/{rows}` and `/service/{serviceID}` | ✅ `*` | `trainServices[]` with `serviceID` (**the same value as railinfo's `Id`**, so rows can be joined), `std`, `etd`, `platform`, `operatorCode` (`SW`), **`length`** (coaches; `0` = unknown; 3, 6, 8, 10 and 12 seen), `delayReason`, `cancelReason`, `isCancelled`. Also `nrccMessages[{value}]` (HTML disruption messages for the station). `length` is present without `?expand=true`. `formation` (coach loading) was `null` for every SWR train. The service is run by a volunteer, so treat it as optional: the page must work without it. |
+| TfL | `GET /Line/south-western-railway/Status`, `/Line/south-western-railway/StopPoints`, `/Line/south-western-railway/Route/Sequence/{dir}` | ✅ `*` | One status for all of SWR (on the day `Special Service`, with `reason` holding a nationalrail.co.uk link); 202 stops with `910G…` ids; 36 routes. There's no crowding (`/crowding/910GWATRLMN/Live` → `dataAvailable: false`), and `/StopPoint/{id}/ArrivalDepartures?lineIds=south-western-railway` is rejected as `line id … is invalid`. |
+| SWR website API | `GET https://www.southwesternrailway.com/api/…` | ❌ none | Status boards, incidents, seat availability, station performance and the station list (details in S3, S4, S6 and S7). Undocumented and used by the SWR website, so it may change without notice. |
+
+**Not usable:**
+- **Per-coach occupancy** (`railinfo…/api/TrainOccupancy/trainoccupancy`) returns 404.
+- **Live car parks** (`/api/LiveCarParking/*`) hung until the 30–40 s timeout and needs a token.
+- **`swrapi.southwesternrailway.com`** answers 403 without the SWR website's own API key. Don't copy that key into this repo.
+- **The official National Rail feed** (OpenLDBWS, via Rail Data Marketplace) needs a registered token and sends no CORS headers, which is why Huxley2 is used.
+
+### What S0 provides (the contract for S1–S6)
+
+S0 builds exactly these names, so the other packages can code against them before S0 merges.
+
+- **Files:**
+  - `js/swr-api.js`: the client and shared pure helpers (`window.SwrApi`, and `module.exports` in Node).
+  - `js/swr-stations.js`: the generated station list (`window.SWR_STATIONS`, and `module.exports`).
+  - `js/swr-app.js`: the tab controller (`window.SwrApp`).
+  - `css/swr.css`: shared SWR styles.
+  - Stubs that the packages fill: `js/swr-departures.js` (S1), `js/swr-calling-points.js` (S2), `js/swr-status.js` (S3), `js/swr-seats.js` (S4), `js/swr-closures.js` (S5) and `js/swr-performance.js` (S6), each with its own `css/swr-<name>.css`.
+- **Script order in `index.html`**, after `js/app.js`: `swr-stations.js`, `swr-api.js`, `swr-app.js`, then the six package files. `SwrApp` starts on `DOMContentLoaded`, which comes after every classic script has run, so all modules have registered by then.
+- **Station object** (one per `SWR_STATIONS` entry): `{crs: 'WAT', name: 'London Waterloo', nlc: '5598', lat, lon, naptan: '910GWATRLMN' | null, tflHub: 'HUBWAT' | null, url: '/travelling-with-us/at-the-station/…'}`.
+- **Module registration:** every package file ends with `if (typeof window !== 'undefined' && window.SwrApp) SwrApp.register({...})`:
+  ```js
+  SwrApp.register({
+    id: 'departures',                 // renders into <section id="swr-departures">, which S0 creates hidden
+    onStation(station, ctx) {},       // a station was chosen; show the section if there's something to show
+    refresh(station, ctx) {},         // every 60 s while the SWR tab is visible and its Auto-refresh is on, and on "Refresh now"
+  });
+  // ctx = { api: SwrApi, tfl: TflApi client (shares the Settings app key), esc, demo: bool, token }
+  // token changes whenever the station changes; drop late responses whose token is stale, like loadStation() does.
+  ```
+  Section ids: `swr-status`, `swr-departures`, `swr-seats`, `swr-closures`, `swr-performance`. They're in that order in the page, and each is hidden until its module shows it. S2 has no section of its own.
+- **Fetch wrappers in `SwrApi`** (all return parsed JSON or throw; demo mode routes them to fixtures):
+  - `departures(crs)` → railinfo departures, cached 30 s.
+  - `service(id)` → railinfo `/journey/services`.
+  - `huxleyDepartures(crs)` → Huxley departures (40 rows), cached 30 s and **shared by S1 and S3**, so one request serves both.
+  - `huxleyService(id)`.
+  - `snapshot(path)` → `fetch('data/swr/' + path)`. It returns `null` on any failure, including opening `index.html` from disk. S4 and S6 must still render their section when it's `null` (as "not available here"), not throw.
+  - `cached(key, ttlMs, fn)`.
+- **Shared helpers:**
+  - `htmlToText(html)`: SWR and National Rail send HTML in incident details and messages. It parses with `DOMParser`, or a regex fallback in Node, and returns plain paragraphs. Links are kept only if they're `https:` to `southwesternrailway.com`, `nationalrail.co.uk`, `networkrail.co.uk` or `tfl.gov.uk`. The real data contains broken links such as `http://https://www.nationalrail.co.uk/…`; repair or drop them. Never put API HTML into `innerHTML`.
+  - `parseUkTime(str)`: accepts `"19:21"`, `"19:18:22 27/09/2026"` (Europe/London) and ISO strings.
+  - `stationByCrs(crs)`.
+  - `SwrApi.demoRoutes.push(fn)`: packages add their demo fixtures to this list from their own file.
+- **Event for S2:** S1 renders each departure with a `button.swr-dep-more[data-service-id]` and an empty `div.swr-dep-detail[data-service-id]`. When a row is opened, S1 dispatches `document.dispatchEvent(new CustomEvent('swr:service-open', {detail: {serviceId, crs, container}}))`. After each re-render, S1 re-dispatches it for rows that are still open, so a refresh doesn't close them.
+
+### Package S0: tab shell, SWR station picker and shared client (item SWR-9)
+
+**Goal:** a tab bar under the top bar with **TfL** and **SWR**, and an SWR panel where you pick an SWR station. The TfL tab looks and behaves exactly as it does today.
+
+- **Tabs:**
+  - Markup: `role="tablist"`, arrow-key navigation, `aria-selected`.
+  - The existing content (search, network strip, quick picks, `#content`) moves into `#tab-tfl`, and the new `#tab-swr` sits next to it. The TfL search box shows only on the TfL tab.
+  - URL: `?tab=swr&swr=WAT` opens the SWR tab at Waterloo. `?station=` keeps working for TfL. The last tab is remembered as `localStorage['tfl.tab']` (wrapped in the existing `store`).
+  - When the TfL tab is hidden, pause its station refresh and its network-strip timer (a small change in `js/app.js`: skip the tick while hidden, catch up when shown). This saves TfL rate limit. No SWR request is made until the SWR tab is first opened.
+- **Station list:**
+  - `scripts/swr-stations.js` (Node, no dependencies) fetches `GET https://www.southwesternrailway.com/api/swrstations` (204 stations: `Name`, `CrsCode`, `NationalLocationCode`, `Latitude`, `Longitude`, `Url`) and `GET https://api.tfl.gov.uk/Line/south-western-railway/StopPoints` (202 stops).
+  - It matches them by nearest coordinates (within about 400 m), checked against the name, and writes `js/swr-stations.js`.
+  - Stations with no TfL match get `naptan: null`. The Island Line stations are the likely ones; list whatever doesn't match in the PR.
+  - The list is a committed JS file, not JSON, so it works when `index.html` is opened from disk. Rerun the script by hand when SWR's station list changes.
+- **Picker:**
+  - A search box over `SWR_STATIONS`, matching name or CRS code with the same keyboard behaviour as the TfL search.
+  - Quick picks: London Waterloo, Vauxhall, Clapham Junction, Wimbledon, Surbiton, Richmond, Woking, Guildford.
+  - A station header with the name, CRS code and an "Updated …" time, plus an Auto-refresh (60 s) toggle (`swr.autoRefresh`) and "Refresh now".
+  - This makes every SWR-only station (Surbiton, Woking, …) searchable, which is item SWR-9.
+- **Links between the tabs:**
+  - An SWR station with a `tflHub` or `naptan` (e.g. Waterloo, Vauxhall, Wimbledon, Richmond) shows "Open in TfL tab".
+  - A TfL station whose stop has an SWR `910G` child shows "SWR trains from here" (the `south-western-railway` line id is in `/StopPoint/{id}` `lines[]`; Waterloo has it). Keep this as one small addition to `renderLines()` or the station header.
+- **Demo:** `?demo` works on the SWR tab. `SwrApi` routes the railinfo, Huxley and snapshot URLs to `SwrApi.demoRoutes`. S0 supplies none itself; each package brings its own.
+- **Deploy:** `node --check` in `pages.yml` also loops over `scripts/*.js`.
+- **Tests:** `tests/swr-api.test.js` covers `htmlToText` (use the real `nrccMessages` and `LineUpdates[].Details` samples, including the `http://https://` link), `parseUkTime`, the station matching (fixture: 3 swrstations entries plus 3 TfL stops, from the endpoints above) and the URL/tab state parsing.
+
+### Package S1: live departures with train length and delay reasons (items SWR-3, SWR-1, SWR-7)
+
+**Question:** when is the next train, which platform, is it on time, and is it a short train that will be packed?
+
+- **Data:**
+  - `SwrApi.departures(crs)` (railinfo) is the board.
+  - Enrich it from `SwrApi.huxleyDepartures(crs)` by joining railinfo `Id` = Huxley `serviceID`. Huxley gives `length`, `delayReason`, `cancelReason` and a platform when railinfo's is `null`.
+  - If Huxley fails, show the board without those fields and say "Train length unavailable". If railinfo fails, build the board from Huxley alone.
+- **Show:**
+  - The next 10–15 departures: time, expected time (on time / late / cancelled, in the status colours **with text**), platform, destination and coaches.
+  - **Short-train warning:** a train with 1–5 coaches is flagged "Short train (N coaches), may be busier". The rule is this dashboard's heuristic, so label it that way. SWR runs 3- to 12-car trains, and a 3-car Salisbury service left Waterloo on 2026-09-27.
+  - The delay or cancellation reason goes under the row as plain text.
+  - Replacement buses from `BusItems` go in their own group when there are any.
+  - At shared stations such as Clapham Junction, show **SWR trains only** by default, with a toggle for "all operators" (`swr.allOperators`).
+- **Row contract:** implement the `swr-dep-more` / `swr-dep-detail` markup and the `swr:service-open` event from [the S0 contract](#what-s0-provides-the-contract-for-s1s6). Opening a row does nothing more than that until S2 lands.
+- **Refresh:** every 60 s through `refresh()`. That's 2 requests a minute.
+- **Tests:** `normalizeDepartures(railinfo, huxley)` joins and flags rows: late, cancelled, short, unknown length (`0`), a missing Huxley row, and an operator filter. Base the fixtures on the Waterloo and Clapham Junction responses.
+
+### Package S2: where is my train, calling points (item SWR-8)
+
+- **Data:** `SwrApi.service(id)` (railinfo `POST /journey/services`). If that fails, fall back to `SwrApi.huxleyService(id)` (`previousCallingPoints` / `subsequentCallingPoints` with `st`, `et`, `at`, and `length` per stop).
+- **Show:**
+  - When `swr:service-open` fires, fill `detail.container` with a vertical list of stops: scheduled time, expected or actual time, and passed stops dimmed (`IsVisited` or `at`).
+  - Mark the train's last reported location (`LastLocation`) and the station being viewed. Include "Last updated" from `GeneratedAt`.
+  - Cache per service for 30 s. Refresh an open list when S1 re-dispatches the event on its refresh.
+- **Tests:** `normalizeCallingPoints(railinfo)` and `normalizeHuxleyCallingPoints(huxley)` produce the same shape: order, passed or not, late minutes, and a cancelled stop.
+
+### Package S3: SWR service status (items SWR-4, SWR-5, SWR-6)
+
+At the top of the SWR tab, in `#swr-status`.
+
+- **SWR-4 headline (live):** `ctx.tfl` → `/Line/south-western-railway/Status`, shown with the existing status classes and `normalizeStatuses()`. When TfL's `reason` is only a URL (as on the day), show it as a "National Rail details" link. It's shown even before a station is chosen.
+- **SWR-5 status by route group (from the snapshot):**
+  - `SwrApi.snapshot('status.json')`, field `liveInformationBoard`: 13 groups (`RouteName`, `StatusText`, `StatusId`). Seen: `0` Good Service, `2` Major Disruption, `4` Special Timetable. Map any other id by its text.
+  - Expanding a group shows the matching directional rows from `rainbowBoard.Lines[{Description, Status, Incidents}]` (e.g. "Portsmouth to Waterloo via Guildford", Minor Disruption, "passenger being taken ill … between Godalming and Guildford"). `Incidents` is `" "` when there's nothing.
+  - Show "as of" from the snapshot's `fetchedAt`, and a "may be out of date" note when it's more than 45 minutes old.
+- **SWR-6 incident details:**
+  - From the snapshot's `overallstatus`: `Status` (`MajorDisruption`), `Summary`, and `LineUpdates[{Summary, Details, FurtherInfo, UpdatedTime "19:18:22 27/09/2026", IncidentId, Colour "Code Red"|"Code Yellow"}]`. `Details` is long HTML with "What's going on / What we're doing / ticket acceptance / taxis / replacement buses", so render it through `SwrApi.htmlToText` in a collapsed `<details>` per incident.
+  - Live alongside it, once a station is chosen: `nrccMessages` from `SwrApi.huxleyDepartures(crs)`, the same cached request S1 makes.
+- **Without the snapshot** (before S7 is merged, before the Pages switch, or from disk), show the TfL headline and the Huxley messages only.
+- **Tests:** normalisers for all three snapshot parts and for `nrccMessages`, using the samples above.
+
+### Package S4: typical busyness per morning train into Waterloo (item SWR-2)
+
+**Question:** which morning train from my station is usually least crowded?
+
+- **Data:** `SwrApi.snapshot('seats/{CRS}.json')`, written weekly by S7. Source: `GET /api/seatavailability/{fromName}/London%20Waterloo?skip=0&take=100` → `{TotalResults, Items[{Departure, Arrival, Via, NumberOfCarriages, Monday…Friday: "Green"|"Amber"|"Red", Mon_TrainName…Fri_TrainName (e.g. "Arterio")}]}`.
+- **Coverage:** weekday morning peak **into London Waterloo only**. Woking had 43 trains from 06:28 to 09:28; `London Waterloo → Surbiton` returned 0, and `seatavailability/stations/Guildford` returned `[]`.
+- **What the colours mean:** take the wording from SWR's own seat availability page and quote it in the section's "About this data". Until then, show the colour names with a legend, never colour alone.
+- **Show:**
+  - For the chosen station: a compact table of trains with a Mon–Fri colour chip row, carriages and train type. Default to today's weekday column (Monday on weekends).
+  - A "quieter trains" hint picks the Green or Amber trains nearest to a chosen arrival time (`swr.arriveBy`, default 09:00).
+  - Hide the section where there's no file for the station. On Waterloo itself, say it covers trains *into* Waterloo.
+- **Tests:** `seatSummary(items, day)` for sorting, the day column, the weekend fallback, and picking quieter trains near a time.
+
+### Package S5: SWR planned closures, next 14 days (item SWR-10). Investigate first.
+
+**No working source was found on 2026-09-27.** Start with a time-boxed investigation of about 2 hours, and write the findings into this section whether or not it works.
+
+- **Tried:**
+  - `POST https://www.southwesternrailway.com/api/overallstatus/plannedworks` with `{"StationCodes": ["5598", "5520"], "OutwardJourneyDate": "2026-10-03T10:00:00+01:00", "ReturnJourneyDate": null, "IsOpenReturn": false, "UseNlc": true, "DisplayMode": "Qtt"}` (NLC codes; the SWR website sends this before a ticket search). It returned `[]` for Waterloo–Basingstoke, Waterloo–Portsmouth Harbour and Guildford–Portsmouth Harbour on 5 dates from 28 Sep to 11 Oct.
+  - TfL `/Line/south-western-railway/Status/2026-09-27/to/2026-10-11` returned only the current `Special Service`.
+- **Still to try:**
+  - The same POST for other station pairs, on weekends further ahead, or with `DisplayMode` variations.
+  - SWR's engineering-works web pages.
+  - National Rail's `service-disruptions/*` pages, which TfL's `reason` links to.
+- **If a source works:** get it into the S7 snapshot (add a `closures.json` there, coordinating with whoever owns S7) and render it in `#swr-closures`, grouped by date, for the chosen station's routes.
+- **If none works:** leave the section hidden, record what was tried here, and mark SWR-10 "❌ No source" in the status table.
+
+### Package S6: station punctuality and cancellations (item SWR-11)
+
+- **Data:** `SwrApi.snapshot('performance.json')`, written weekly by S7. Source: `GET /api/stationperformance/{name}?skip=0&take=10` → `{Items[{StationName, CRSCode, Punctal: "85.00", Cancelled: "3.90"}, {StationName: "Wessex route target", Punctal: "86.12", Cancelled: "3.68"}], Period: "4-Week Period from 26 July to 22 August", Next3MonthPlan, NextYearPlan, LongTermPlan}`. There are 171 station names from `/api/stationperformance/GetStations`.
+- **Show:** two stat tiles, "On time %" and "Cancelled %", each compared with the route target (better or worse, in words), plus the period. The three "plan" texts go in a collapsed `<details>`. Label it clearly as a past 4-week period, not live.
+- **Tests:** `performanceSummary(raw)` for parsing the strings to numbers, picking the target row, better or worse than target, and missing values.
+
+### Package S7: scheduled snapshots of the SWR website API
+
+The SWR website API sends no CORS headers, so the site publishes copies of it from GitHub Actions.
+
+- **Script:** `scripts/swr-snapshot.js` (Node LTS, global `fetch`, no dependencies, CommonJS like the rest).
+  - **Be polite:** one request at a time, at least 1 s apart, a 30 s timeout, one retry, and `User-Agent: tfl-dashboard (https://github.com/jinalharia/tfl-dashboard)`.
+  - `--status --out <dir>` writes `status.json`: 3 requests, run on every deploy and every 15 minutes.
+  - `--weekly --out data/swr` writes `seats/*.json`, `seats/index.json` and `performance.json`: about 350 requests, around 6 minutes at 1 per second.
+  - A failed source is recorded in `errors` and never fails the run.
+- **Station names:** seat availability and performance use their **own names** (`"Ascot"` and `"Boxhill & Westhumble"` versus swrstations' `"Ascot (Berks)"` and `"Box Hill and Westhumble"`, and the seat list includes a `"NOT FOUND"` entry). Map them to CRS with a pure, tested `matchStationName(name, SWR_STATIONS)`: normalise `&`/`and` and brackets, and add a small alias table for the rest. List any names that still don't match in the PR.
+- **Workflows:**
+  - `pages.yml`: add `schedule: cron '7,22,37,52 * * * *'`, and allow `schedule` in the deploy job's `if`. The *Stage site files* step copies `data/` too and runs `node scripts/swr-snapshot.js --status --out _site/data/swr`.
+  - New `swr-weekly.yml`: runs Mondays around 05:17 UTC and on `workflow_dispatch`, with `contents: write` and `actions: write`. It runs `--weekly`, commits `data/swr/` to `main` only if something changed, then starts `pages.yml` with `gh workflow run`, because a push made with `GITHUB_TOKEN` doesn't trigger workflows.
+  - Scheduled runs can start 10–30 minutes late, and GitHub turns schedules off after 60 days with no repo activity. The page shows `fetchedAt` so staleness is visible.
+- **Depends on the owner's Pages switch** (package D). Until the Pages source is *GitHub Actions*, `status.json` isn't published, but the committed weekly files are served from `main` anyway. S3, S4 and S6 must handle both cases.
+- **Tests:** `matchStationName`, and a function that builds each file from raw responses. Fixtures are the samples in S4 and S6 and an `overallstatus` / `LiveInformationBoard` / `RainbowBoard` trio.
+
+#### Snapshot file formats (S7 writes, S3, S4, S6 read)
+
+```
+data/swr/status.json        { fetchedAt, errors: {name: message},
+                              overallstatus: <raw /api/overallstatus>,
+                              liveInformationBoard: <raw /api/LiveInformationBoard>,
+                              rainbowBoard: <raw /api/RainbowBoard> }
+data/swr/seats/index.json   { fetchedAt, stations: [{crs, seatName}] }
+data/swr/seats/{CRS}.json   { fetchedAt, crs, from: <seatName>, to: "London Waterloo", items: <raw Items[]> }
+data/swr/performance.json   { fetchedAt, period, target: {punctual, cancelled},
+                              stations: {CRS: <raw /api/stationperformance/{name} response>} }
+```
+
+Raw responses are kept as they come, so the normalisers in S3, S4 and S6 can be tested against the same shapes the live API returns.
+
+### Conventions for the SWR packages (on top of the ones below)
+
+- **Names:** files `js/swr-*.js`, `css/swr-*.css`, `tests/swr-*.test.js`; element ids and classes start with `swr-`; `localStorage` keys start with `swr.`.
+- **Honesty:** each section ends with its own collapsed "About this data" that names the source. Say when it's unofficial (the SWR website API, Huxley2), a snapshot (with its time) or this dashboard's heuristic (the short-train warning). Put these in the section, not in the TfL "About the data" card, so packages don't conflict.
+- **Security:** everything from SWR, Huxley2 and National Rail is untrusted, and several fields are HTML. Use `SwrApi.htmlToText`, `esc()` or `textContent`.
+- **Checking against live data in a Claude Code cloud session:**
+  - The environment's network settings must allow `railinfo.southwesternrailway.com`, `huxley2.azurewebsites.net` and `www.southwesternrailway.com`, as well as `api.tfl.gov.uk`.
+  - Use the same Playwright `page.route` and `curl` approach as for TfL, for each host.
+- **README:** add an "SWR and National Rail endpoints" table next to the TfL one, one row per endpoint a package uses.
 
 ## Conventions for every package
 
