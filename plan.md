@@ -2,7 +2,7 @@
 
 Status of additions to the live station crowding dashboard, written so separate agents can each take a work package. Last updated 2026-09-27.
 
-Live site: https://jinalharia.github.io/tfl-dashboard/. GitHub Pages deploys `main` from the repo root, about a minute after each merge.
+Live site: https://jinalharia.github.io/tfl-dashboard/. Until the repo owner switches the Pages source to *GitHub Actions* (see package D), GitHub Pages deploys `main` from the repo root, about a minute after each merge. After the switch, each merge deploys only if the tests pass.
 
 ## Status at a glance
 
@@ -18,7 +18,7 @@ Live site: https://jinalharia.github.io/tfl-dashboard/. GitHub Pages deploys `ma
 | 8 | Network-wide status strip | ✅ Done (package B) | B |
 | 9 | Planned closures in the next 2 weeks | ✅ Done (package B) | B |
 | 2 | Live crowding along a whole line | ✅ Done (package C) | C |
-| — | Deploy only when tests pass (GitHub Actions) | ⬜ Optional | D |
+| — | Deploy only when tests pass (GitHub Actions) | ✅ Done (package D); owner must switch the Pages source | D |
 | — | Boarding estimate: trains you may need to let go before boarding | ✅ Done (package E) | E |
 
 **Note on #1.** The proposal was "entry/exit footfall", but TfL's `passengerFlows` are about 10 *unlabelled* values per 15-minute slice, so they can't be split into entries and exits. What shipped is **typical passenger flow per line**: the per-slice sum, charted on each line card. TfL gives one profile for all days and it follows a weekday pattern, so the card says so at weekends.
@@ -90,9 +90,22 @@ One "Station information" section below the tiles, loaded when a station is sele
 - **Show:** a strip or ladder of stations along the line, each coloured and labelled by crowding level (use `crowdingLevel()` for the label and the status colours), with the selected station highlighted. Stations with no data (DLR, Network Rail-run stations) should show as "no data", not zero.
 - **Tests:** a pure helper that turns a route sequence into an ordered station list, with unit tests.
 
-### Package D (optional): tested deploys
+### Package D: tested deploys ✅ done
 
-Add `.github/workflows/pages.yml`: on push to `main`, run `npm test`, then `actions/upload-pages-artifact` and `actions/deploy-pages`. The repo owner then has to switch **Settings → Pages → Source** to *GitHub Actions*. Coordinate that with the owner before merging, or the site will stop updating.
+**Status: ✅ done, waiting on one manual step by the repo owner.** `.github/workflows/pages.yml` runs on push to `main`, on pull requests against `main`, and on `workflow_dispatch`.
+- **`test`** job: checkout, Node LTS (`lts/*`), `npm test`, then `node --check` on each file in `js/` and `tests/`. It runs on PRs too, so they get a visible check.
+- **`deploy`** job: `needs: test`, and runs only for a push to `main` or a manual run on `main`. It stages `index.html`, `css/` and `js/` plus an empty `.nojekyll` into `_site/`, then runs `actions/configure-pages`, `actions/upload-pages-artifact` and `actions/deploy-pages`. It has `pages: write`, `id-token: write` and `contents: read`, the `github-pages` environment with the page URL, and a `pages` concurrency group that lets a running deploy finish.
+
+**Manual step (repo owner):** in **Settings → Pages → Build and deployment → Source**, choose **GitHub Actions**.
+- Until then, Pages keeps deploying every push straight from `main`, with all files and whether or not the tests pass. The `deploy` job fails, but the `test` job still runs, so nothing else breaks.
+- After the switch, a push to `main` deploys only if the tests pass, and only the site files are published. The README, `plan.md`, `tests/` and `package.json` stop being public.
+
+Notes from building it:
+- Action versions, checked against each repo's tags on 2026-09-27: `actions/checkout@v7`, `actions/setup-node@v7`, `actions/configure-pages@v6`, `actions/upload-pages-artifact@v5`, `actions/deploy-pages@v5`.
+- `node --check a.js b.js` checks **only `a.js`**; the rest become script arguments. So the workflow loops over the files one at a time.
+- `upload-pages-artifact` leaves out dotfiles unless `include-hidden-files: true`, so the workflow sets that to keep `.nojekyll`. (A deploy from Actions doesn't run Jekyll anyway; `.nojekyll` is a belt-and-braces guard.)
+- The page loads only `css/styles.css` and the four `js/` files, so `index.html`, `css/` and `js/` are the complete site. Checked by loading `_site/index.html?demo` (and `?demo&station=HUBSRA`) in headless Chromium: no console errors and no failed requests. A new asset outside those folders must be added to the *Stage site files* step.
+- `_site/` is in `.gitignore`.
 
 ### Package E: boarding estimate ✅ done
 
