@@ -185,7 +185,8 @@
   }
 
   function typical(naptan, day, minutes) {
-    const s = (NAPTANS[naptan] || { scale: 0.5 }).scale;
+    // Stations outside the demo set (neighbours on the demo routes) get a steady made-up scale.
+    const s = NAPTANS[naptan] ? NAPTANS[naptan].scale : 0.3 + 0.6 * rand('scale' + naptan);
     const h = minutes / 60 < 4 ? minutes / 60 + 24 : minutes / 60;
     const g = (mu, sd) => Math.exp(-(((h - mu) / sd) ** 2));
     const weekend = day === 'SAT' || day === 'SUN';
@@ -323,13 +324,18 @@
 
   // Simplified route sequences (forward order = first direction code). Real data comes from
   // /Line/{id}/Route/Sequence/all; stations outside the demo set exist only as neighbours.
+  // `branches` are extra routes in the same direction, like the real Northern line's several routes.
   const DEMO_ROUTES = {
     central: { dirs: ['EB', 'WB'], ids: ['940GZZLUNHG', '940GZZLUOXC', '940GZZLUBNK', '940GZZLULVT', '940GZZLUSTD', '940GZZLULYS'] },
-    victoria: { dirs: ['NB', 'SB'], ids: ['940GZZLUGPK', '940GZZLUOXC', '940GZZLUWRR', '940GZZLUKSX', '940GZZLUHAI'] },
+    // The whole Victoria line, as in the real response (16 stations, Brixton → Walthamstow Central).
+    victoria: { dirs: ['NB', 'SB'], ids: ['940GZZLUBXN', '940GZZLUSKW', '940GZZLUVXL', '940GZZLUPCO', '940GZZLUVIC', '940GZZLUGPK', '940GZZLUOXC', '940GZZLUWRR', '940GZZLUEUS', '940GZZLUKSX', '940GZZLUHAI', '940GZZLUFPK', '940GZZLUSVS', '940GZZLUTMH', '940GZZLUBLR', '940GZZLUWWL'] },
     jubilee: { dirs: ['EB', 'WB'], ids: ['940GZZLUWSM', '940GZZLUWLO', '940GZZLUCYF', '940GZZLUSTD'] },
-    northern: { dirs: ['NB', 'SB'], ids: ['940GZZLUKNG', '940GZZLUWLO', '940GZZLUBNK', '940GZZLUKSX', '940GZZLUCTN'] },
+    northern: {
+      dirs: ['NB', 'SB'], ids: ['940GZZLUKNG', '940GZZLUWLO', '940GZZLUBNK', '940GZZLUKSX', '940GZZLUCTN', '940GZZLUHGT', '940GZZLUFYC', '940GZZLUWOP', '940GZZLUHBT'],
+      branches: [['940GZZLUKNG', '940GZZLUWLO', '940GZZLUBNK', '940GZZLUKSX', '940GZZLUCTN', '940GZZLUHGT', '940GZZLUFYC', '940GZZLUMHL']],
+    },
     'waterloo-city': { dirs: ['EB', 'WB'], ids: ['940GZZLUWLO', '940GZZLUBNK'] },
-    bakerloo: { dirs: ['NB', 'SB'], ids: ['940GZZLULBN', '940GZZLUWLO', '940GZZLUOXC', '940GZZLUBST'] },
+    bakerloo: { dirs: ['NB', 'SB'], ids: ['940GZZLULBN', '940GZZLUWLO', '940GZZLUOXC', '940GZZLUBST', '940GZZLUHAW'] },
     circle: { dirs: ['EB', 'WB'], ids: ['940GZZLUESQ', '940GZZLUKSX', '940GZZLUFCN'] },
     'hammersmith-city': { dirs: ['EB', 'WB'], ids: ['940GZZLUESQ', '940GZZLUKSX', '940GZZLUFCN'] },
     metropolitan: { dirs: ['EB', 'WB'], ids: ['940GZZLUESQ', '940GZZLUKSX', '940GZZLUFCN'] },
@@ -340,17 +346,27 @@
     '940GZZLUWRR': 'Warren Street', '940GZZLUHAI': 'Highbury & Islington', '940GZZLUWSM': 'Westminster', '940GZZLUCYF': 'Canary Wharf',
     '940GZZLUKNG': 'Kennington', '940GZZLUCTN': 'Camden Town', '940GZZLULBN': 'Lambeth North', '940GZZLUBST': 'Baker Street',
     '940GZZLUESQ': 'Euston Square', '940GZZLUFCN': 'Farringdon', '940GZZLURSQ': 'Russell Square', '940GZZLUCAR': 'Caledonian Road',
+    '940GZZLUBXN': 'Brixton', '940GZZLUSKW': 'Stockwell', '940GZZLUVXL': 'Vauxhall', '940GZZLUPCO': 'Pimlico', '940GZZLUVIC': 'Victoria',
+    '940GZZLUEUS': 'Euston', '940GZZLUFPK': 'Finsbury Park', '940GZZLUSVS': 'Seven Sisters', '940GZZLUTMH': 'Tottenham Hale',
+    '940GZZLUBLR': 'Blackhorse Road', '940GZZLUWWL': 'Walthamstow Central', '940GZZLUHGT': 'Highgate', '940GZZLUHBT': 'High Barnet',
+    '940GZZLUFYC': 'Finchley Central', '940GZZLUWOP': 'Woodside Park', '940GZZLUMHL': 'Mill Hill East', '940GZZLUHAW': 'Harrow & Wealdstone',
   };
+  // Like the real Network Rail-run stations (e.g. Harrow & Wealdstone): /crowding/{id}/Live says dataAvailable false.
+  const NO_LIVE_DATA = new Set(['940GZZLUHAW']);
   const demoName = (id) => (NAPTANS[id] ? NAPTANS[id].name.replace(/ Underground Station$/, '') : DEMO_NAMES[id] || id);
 
   function routeSequence(line) {
     const r = DEMO_ROUTES[line];
     if (!r) return { lineId: line, orderedLineRoutes: [], stopPointSequences: [], stations: [] };
-    const rev = [...r.ids].reverse();
+    // Like the real response: each route once per direction, names HTML-encoded ("A  &harr;  B").
+    const both = (ids) => {
+      const rev = [...ids].reverse();
+      return [{ name: `${demoName(ids[0])}  &harr;  ${demoName(rev[0])} `, naptanIds: ids }, { name: `${demoName(rev[0])}  &harr;  ${demoName(ids[0])} `, naptanIds: rev }];
+    };
     return {
       lineId: line,
-      orderedLineRoutes: [{ name: `${demoName(r.ids[0])} ↔ ${demoName(rev[0])}`, naptanIds: r.ids }, { name: `${demoName(rev[0])} ↔ ${demoName(r.ids[0])}`, naptanIds: rev }],
-      stopPointSequences: [{ stopPoint: r.ids.map((id) => ({ id, stationId: id, name: demoName(id) + ' Underground Station' })) }],
+      orderedLineRoutes: [r.ids, ...(r.branches || [])].flatMap(both),
+      stopPointSequences: [r.ids, ...(r.branches || [])].map((ids) => ({ stopPoint: ids.map((id) => ({ id, stationId: id, name: demoName(id) + ' Underground Station' })) })),
       stations: [],
     };
   }
@@ -430,7 +446,8 @@
     if (lower[0] === 'line' && lower[2] === 'status') return lineStatuses(parts[1].split(','));
     if (lower[0] === 'crowding' && parts[1]) {
       const naptan = parts[1];
-      if (!NAPTANS[naptan]) return null;
+      if (lower[2] === 'live' && NO_LIVE_DATA.has(naptan)) return { dataAvailable: false, percentageOfBaseline: 0, timeUtc: null, timeLocal: null };
+      if (!NAPTANS[naptan] && !(lower[2] === 'live' && DEMO_NAMES[naptan])) return null;
       if (lower[2] === 'live') {
         const v = typical(naptan, now.day, now.minutes) * (0.8 + 0.45 * rand(naptan + Math.floor(Date.now() / 300000)));
         const d = new Date();

@@ -567,3 +567,133 @@ test('formatPeriod shows London time and collapses same-day periods', () => {
   // After the clocks go back (25 Oct 2026), London is on GMT.
   assert.equal(T.formatPeriod('2026-11-01T09:00:00.000Z', null), 'From Sun 1 Nov 09:00');
 });
+
+// ---------------------------------------------------------------------------
+// Package C: live crowding along a line
+// ---------------------------------------------------------------------------
+
+// Abridged from /Line/northern/Route/Sequence/all (2026-09-27): four of its 16 orderedLineRoutes,
+// with the real names (HTML-encoded arrows, double spaces) and NaPTAN lists.
+const NORTHERN_HBT_BANK = '940GZZLUHBT 940GZZLUTAW 940GZZLUWOP 940GZZLUWFN 940GZZLUFYC 940GZZLUEFY 940GZZLUHGT 940GZZLUACY 940GZZLUTFP 940GZZLUKSH 940GZZLUCTN 940GZZLUEUS 940GZZLUKSX 940GZZLUAGL 940GZZLUODS 940GZZLUMGT 940GZZLUBNK 940GZZLULNB 940GZZLUBOR 940GZZLUEAC 940GZZLUKNG 940GZZLUOVL 940GZZLUSKW 940GZZLUCPN 940GZZLUCPC 940GZZLUCPS 940GZZLUBLM 940GZZLUTBC 940GZZLUTBY 940GZZLUCSD 940GZZLUSWN 940GZZLUMDN'.split(' ');
+const NORTHERN_MHL_BANK = ['940GZZLUMHL', ...NORTHERN_HBT_BANK.slice(4)];
+const NORTHERN_MHL_CHX = '940GZZLUMHL 940GZZLUFYC 940GZZLUEFY 940GZZLUHGT 940GZZLUACY 940GZZLUTFP 940GZZLUKSH 940GZZLUCTN 940GZZLUMTC 940GZZLUEUS 940GZZLUWRR 940GZZLUGDG 940GZZLUTCR 940GZZLULSQ 940GZZLUCHX 940GZZLUEMB 940GZZLUWLO 940GZZLUKNG 940GZZLUOVL 940GZZLUSKW 940GZZLUCPN 940GZZLUCPC 940GZZLUCPS 940GZZLUBLM 940GZZLUTBC 940GZZLUTBY 940GZZLUCSD 940GZZLUSWN 940GZZLUMDN'.split(' ');
+const NORTHERN_ROUTES = {
+  lineId: 'northern',
+  direction: 'all',
+  orderedLineRoutes: [
+    { name: 'High Barnet  &harr;  Morden  via Bank', naptanIds: NORTHERN_HBT_BANK, serviceType: 'Regular' },
+    { name: 'Mill Hill East  &harr;  Morden  via Bank', naptanIds: NORTHERN_MHL_BANK, serviceType: 'Regular' },
+    { name: 'Mill Hill East  &harr;  Morden  via Charing Cross', naptanIds: NORTHERN_MHL_CHX, serviceType: 'Regular' },
+    { name: 'Morden  &harr;  High Barnet  via Bank', naptanIds: [...NORTHERN_HBT_BANK].reverse(), serviceType: 'Regular' },
+  ],
+};
+// /Line/victoria/Route/Sequence/all (2026-09-27): one route each way, 16 stations.
+const VICTORIA_IDS = '940GZZLUBXN 940GZZLUSKW 940GZZLUVXL 940GZZLUPCO 940GZZLUVIC 940GZZLUGPK 940GZZLUOXC 940GZZLUWRR 940GZZLUEUS 940GZZLUKSX 940GZZLUHAI 940GZZLUFPK 940GZZLUSVS 940GZZLUTMH 940GZZLUBLR 940GZZLUWWL'.split(' ');
+const VICTORIA_ROUTES = {
+  lineId: 'victoria',
+  orderedLineRoutes: [
+    { name: 'Brixton  &harr;  Walthamstow Central ', naptanIds: VICTORIA_IDS, serviceType: 'Regular' },
+    { name: 'Walthamstow Central  &harr;  Brixton ', naptanIds: [...VICTORIA_IDS].reverse(), serviceType: 'Regular' },
+  ],
+  stopPointSequences: [
+    { direction: 'outbound', branchId: 1, stopPoint: [
+      { id: '940GZZLUGPK', stationId: '940GZZLUGPK', topMostParentId: '940GZZLUGPK', name: 'Green Park Underground Station' },
+      { id: '940GZZLUOXC', stationId: '940GZZLUOXC', topMostParentId: '940GZZLUOXC', name: 'Oxford Circus Underground Station' },
+      { id: '940GZZLUWRR', stationId: '940GZZLUWRR', topMostParentId: '940GZZLUWRR', name: 'Warren Street Underground Station' },
+    ] },
+  ],
+  stations: [{ id: 'HUBKGX', name: "King's Cross St. Pancras Underground Station" }],
+};
+
+test('cleanRouteName decodes the arrow and tidies spaces', () => {
+  assert.equal(T.cleanRouteName('Brixton  &harr;  Walthamstow Central '), 'Brixton ↔ Walthamstow Central');
+  assert.equal(T.cleanRouteName('Elephant &amp; Castle  &harr;  Queen\'s Park'), "Elephant & Castle ↔ Queen's Park");
+  assert.equal(T.cleanRouteName(null), '');
+});
+
+test('lineBranches: Victoria is one branch, in the direction TfL lists first', () => {
+  const b = T.lineBranches(VICTORIA_ROUTES, '940GZZLUOXC');
+  assert.equal(b.length, 1);
+  assert.equal(b[0].name, 'Brixton ↔ Walthamstow Central');
+  assert.equal(b[0].ids.length, 16);
+  assert.equal(b[0].ids[b[0].index], '940GZZLUOXC');
+  assert.equal(b[0].index, 6);
+});
+
+test("lineBranches: Northern at King's Cross keeps the Bank branches through it, longest first", () => {
+  const b = T.lineBranches(NORTHERN_ROUTES, '940gzzluksx');
+  // The Charing Cross branch doesn't call at King's Cross; the reverse High Barnet route is a duplicate.
+  assert.deepEqual(b.map((x) => x.name), ['High Barnet ↔ Morden via Bank', 'Mill Hill East ↔ Morden via Bank']);
+  assert.deepEqual(b.map((x) => x.ids.length), [32, 29]);
+  assert.equal(b[0].ids[b[0].index], '940GZZLUKSX');
+  assert.notEqual(b[0].key, b[1].key);
+  // At Camden Town every branch calls, so all three show.
+  assert.equal(T.lineBranches(NORTHERN_ROUTES, '940GZZLUCTN').length, 3);
+  // A station not on the line, or a junk response, gives no branches.
+  assert.deepEqual(T.lineBranches(NORTHERN_ROUTES, '940GZZLUOXC'), []);
+  assert.deepEqual(T.lineBranches(null, '940GZZLUKSX'), []);
+});
+
+test('lineBranches: Waterloo & City has two stations', () => {
+  // /Line/waterloo-city/Route/Sequence/all (2026-09-27)
+  const raw = { orderedLineRoutes: [
+    { name: 'Bank  &harr;  Waterloo ', naptanIds: ['940GZZLUBNK', '940GZZLUWLO'] },
+    { name: 'Waterloo  &harr;  Bank ', naptanIds: ['940GZZLUWLO', '940GZZLUBNK'] },
+  ] };
+  const b = T.lineBranches(raw, '940GZZLUWLO');
+  assert.equal(b.length, 1);
+  assert.deepEqual(b[0].ids, ['940GZZLUBNK', '940GZZLUWLO']);
+  assert.equal(b[0].index, 1);
+});
+
+test('outwardOrder starts at the station and alternates outwards', () => {
+  assert.deepEqual(T.outwardOrder(['a', 'b', 'c', 'd', 'e'], 1), ['b', 'a', 'c', 'd', 'e']);
+  assert.deepEqual(T.outwardOrder(['a', 'b', 'c'], 2), ['c', 'b', 'a']);
+  assert.deepEqual(T.outwardOrder(['a'], 0), ['a']);
+  assert.deepEqual(T.outwardOrder([], 0), []);
+});
+
+test('lineCrowdingRows labels live, no-data, error and pending stations', () => {
+  const names = T.routeStationNames(VICTORIA_ROUTES);
+  const notFound = Object.assign(new Error('TfL API returned 404'), { status: 404 });
+  const limited = Object.assign(new Error('TfL API rate limit reached'), { status: 429 });
+  const readings = new Map([
+    // /crowding/940GZZLUOXC/Live
+    ['940GZZLUOXC', T.normalizeLive({ dataAvailable: true, percentageOfBaseline: 0.2692365, timeUtc: '2026-09-27T13:06:00.000Z', timeLocal: '2026-09-27 14:06:00' })],
+    // /crowding/940GZZLUKOY/Live: a station TfL doesn't cover answers 200 with dataAvailable false and 0
+    ['940GZZLUGPK', T.normalizeLive({ dataAvailable: false, percentageOfBaseline: 0, timeUtc: null, timeLocal: null })],
+    ['940GZZLUWRR', notFound],
+    ['940GZZLUEUS', limited],
+  ]);
+  const rows = T.lineCrowdingRows(['940GZZLUGPK', '940GZZLUOXC', '940GZZLUWRR', '940GZZLUEUS', '940GZZLUKSX'], names, readings, '940GZZLUOXC');
+  assert.deepEqual(rows.map((r) => r.state), ['nodata', 'live', 'nodata', 'error', 'pending']);
+  assert.deepEqual(rows.map((r) => r.name), ['Green Park', 'Oxford Circus', 'Warren Street', '940GZZLUEUS', '940GZZLUKSX']);
+  assert.equal(rows[1].selected, true);
+  assert.equal(rows[1].level.key, 'moderate');
+  assert.equal(rows[1].value, 0.2692365);
+  // "No data" is never shown as zero.
+  assert.equal(rows[0].value, null);
+  assert.equal(rows[0].level.key, 'unknown');
+  assert.equal(rows[3].error.status, 429);
+
+  const sum = T.lineCrowdingSummary(rows);
+  assert.equal(sum.total, 5);
+  assert.deepEqual(sum.counts, { 'very-busy': 0, busy: 0, moderate: 1, quiet: 0, nodata: 2, pending: 1, error: 1 });
+  assert.equal(sum.busiest.id, '940GZZLUOXC');
+  assert.equal(sum.latest, '2026-09-27 14:06:00');
+});
+
+test('mapLimit keeps order and never runs more than the limit at once', async () => {
+  let running = 0;
+  let peak = 0;
+  const out = await T.mapLimit([5, 1, 4, 2, 3, 0, 6], 3, async (v) => {
+    running += 1;
+    peak = Math.max(peak, running);
+    await new Promise((r) => setTimeout(r, v * 2));
+    running -= 1;
+    return v * 10;
+  });
+  assert.deepEqual(out, [50, 10, 40, 20, 30, 0, 60]);
+  assert.equal(peak, 3);
+  assert.deepEqual(await T.mapLimit([], 3, async () => 1), []);
+});

@@ -13,8 +13,10 @@
  *     GET /Place?type=BikePoint&lat&lon&radius    bike dock distances (to rank the nearest)
  *     GET /Line/Mode/{modes}/Status               status of every line in these modes (network strip)
  *     GET /Line/{ids}/Status/{from}/to/{to}       planned closures over a date range
+ *     GET /Line/{id}/Route/Sequence/all           station order per branch (boarding estimate, whole-line strip)
  *   Crowding API
- *     GET /crowding/{naptan}/Live                 live station busyness (% of baseline)
+ *     GET /crowding/{naptan}/Live                 live station busyness (% of baseline); also per station
+ *                                                 along a line, on demand ("Show whole line")
  *     GET /crowding/{naptan}/{dayOfWeek}          typical busyness in 15-minute bands
  *
  * Classic script (no modules) so index.html also works when opened from disk;
@@ -793,6 +795,108 @@
     return out;
   }
 
+  /** "Brixton  &harr;  Walthamstow Central " → "Brixton ↔ Walthamstow Central" (TfL HTML-encodes route names). */
+  function cleanRouteName(name) {
+    return String(name || '')
+      .replace(/&harr;/g, '↔')
+      .replace(/&rarr;/g, '→')
+      .replace(/&amp;/g, '&')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /**
+   * The branches of a line that call at `stationId`, from /Line/{id}/Route/Sequence/all.
+   * TfL lists each route once per direction; a route and its reverse are one branch here, kept in
+   * the direction TfL lists first. Longest first, so the first entry is a sensible default.
+   * Returns [{key, name, ids, index}] where `index` is the station's position in `ids`.
+   */
+  function lineBranches(routeSeq, stationId) {
+    const S = String(stationId || '').toUpperCase();
+    const seen = new Set();
+    const out = [];
+    for (const r of (routeSeq && routeSeq.orderedLineRoutes) || []) {
+      const ids = (r.naptanIds || []).map((x) => String(x).toUpperCase());
+      const index = ids.indexOf(S);
+      if (index < 0) continue;
+      const key = ids.join(',');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      seen.add([...ids].reverse().join(','));
+      out.push({ key, name: cleanRouteName(r.name) || `${ids[0]} – ${ids[ids.length - 1]}`, ids, index });
+    }
+    // Array.prototype.sort is stable, so equal lengths keep TfL's order.
+    return out.sort((a, b) => b.ids.length - a.ids.length);
+  }
+
+  /** Indexes of `ids` starting at `index` and working outwards (so the nearest stations load first). */
+  function outwardOrder(ids, index) {
+    const out = [];
+    const start = Math.max(0, Math.min(ids.length - 1, index || 0));
+    if (!ids.length) return out;
+    out.push(ids[start]);
+    for (let d = 1; out.length < ids.length; d++) {
+      if (start - d >= 0) out.push(ids[start - d]);
+      if (start + d < ids.length) out.push(ids[start + d]);
+    }
+    return out;
+  }
+
+  /**
+   * Rows for the whole-line strip, in route order. `readings` maps NaPTAN → a normalizeLive() result,
+   * an Error (status 404 means TfL has no crowding data for that station), or nothing yet.
+   * state: 'live' (value set), 'nodata' (dataAvailable false or 404), 'error', or 'pending'.
+   */
+  function lineCrowdingRows(ids, names, readings, selectedId) {
+    const S = String(selectedId || '').toUpperCase();
+    return ids.map((raw) => {
+      const id = String(raw).toUpperCase();
+      const r = readings && readings.get(id);
+      const row = { id, name: (names && names.get(id)) || id, selected: id === S, state: 'pending', value: null, level: crowdingLevel(null), timeLocal: null, error: null };
+      if (r instanceof Error) {
+        if (r.status === 404) row.state = 'nodata';
+        else { row.state = 'error'; row.error = r; }
+      } else if (r) {
+        if (r.available && r.value !== null) {
+          row.state = 'live';
+          row.value = r.value;
+          row.level = crowdingLevel(r.value);
+          row.timeLocal = r.timeLocal || null;
+        } else row.state = 'nodata';
+      }
+      return row;
+    });
+  }
+
+  /** Counts per crowding level for the strip's summary, plus the busiest station and the latest reading time. */
+  function lineCrowdingSummary(rows) {
+    const counts = { 'very-busy': 0, busy: 0, moderate: 0, quiet: 0, nodata: 0, pending: 0, error: 0 };
+    let busiest = null;
+    let latest = null;
+    for (const r of rows) {
+      if (r.state === 'live') {
+        counts[r.level.key] += 1;
+        if (!busiest || r.value > busiest.value) busiest = r;
+        if (r.timeLocal && (!latest || r.timeLocal > latest)) latest = r.timeLocal;
+      } else counts[r.state] += 1;
+    }
+    return { total: rows.length, counts, busiest, latest };
+  }
+
+  /** Run `fn` over `items` with at most `limit` calls in flight; results keep the input order. */
+  async function mapLimit(items, limit, fn) {
+    const out = new Array(items.length);
+    let next = 0;
+    async function worker() {
+      while (next < items.length) {
+        const i = next++;
+        out[i] = await fn(items[i], i);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(limit || 1, items.length)) }, worker));
+    return out;
+  }
+
   const BOARDING_BANDS = [
     { key: 'board', label: 'Board the first train', trains: 0 },
     { key: 'tight', label: 'First train, but it will be tight', trains: 0 },
@@ -1006,6 +1110,12 @@
     loadingAt,
     previousStations,
     routeStationNames,
+    cleanRouteName,
+    lineBranches,
+    outwardOrder,
+    lineCrowdingRows,
+    lineCrowdingSummary,
+    mapLimit,
     boardingEstimate,
     lineColour,
   };
