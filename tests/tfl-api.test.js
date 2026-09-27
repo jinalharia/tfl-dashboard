@@ -290,6 +290,179 @@ test('boardingEstimate: trains arriving full leave little room at a through stat
 });
 
 // ---------------------------------------------------------------------------
+// Station information (package A)
+// ---------------------------------------------------------------------------
+
+const fac = (key, value) => ({ category: 'Facility', key, sourceSystemKey: 'StaticObjects', value });
+const np = (value) => ({ category: 'NearestPlaces', key: 'SourceSystemPlaceId', sourceSystemKey: 'StaticObjects', value });
+
+// Trimmed from GET /StopPoint/HUBSRA (2026-09-27): the hub and its three station children list
+// identical Facility values; each child lists its own NearestPlaces.
+const STRATFORD_FACILITIES = [
+  fac('Help Points', '0 on platforms, 0 in ticket halls, 0 elsewhere'), fac('Ticket Halls', '2'), fac('Payphones', '8'),
+  fac('Cash Machines', '4'), fac('Lifts', '5'), fac('Toilets', 'yes'), fac('WiFi', 'yes'), fac('Escalators', '2'), fac('Photo Booths', '0'),
+];
+const STRATFORD_HUB = {
+  naptanId: 'HUBSRA', commonName: 'Stratford', stopType: 'TransportInterchange',
+  modes: ['bus', 'dlr', 'elizabeth-line', 'international-rail', 'national-rail', 'overground', 'tube'],
+  additionalProperties: [...STRATFORD_FACILITIES, { category: 'Address', key: 'PhoneNo', value: '0845 330 9880' }, np('BikePoints_790'), np('TaxiRank_5944')],
+  children: [
+    { naptanId: '910GSTFD', commonName: 'Stratford (London) Rail Station', modes: ['elizabeth-line', 'national-rail', 'overground'],
+      additionalProperties: [...STRATFORD_FACILITIES, { category: 'Address', key: 'PhoneNo', value: '0845 330 9880' }, np('BikePoints_785'), np('BikePoints_790'), np('TaxiRank_5944')], children: [] },
+    { naptanId: '940GZZDLSTD', commonName: 'Stratford DLR Station', modes: ['dlr'],
+      additionalProperties: [...STRATFORD_FACILITIES, { category: 'Address', key: 'PhoneNo', value: '0845 330 9880' }, np('BikePoints_785'), np('BikePoints_790')], children: [] },
+    { naptanId: '940GZZLUSTD', commonName: 'Stratford Underground Station', modes: ['tube'],
+      additionalProperties: [...STRATFORD_FACILITIES, { category: 'Address', key: 'PhoneNo', value: '0845 330 9880' }, np('BikePoints_785'), np('BikePoints_790')],
+      children: [{ naptanId: '9400ZZLUSTD1', stopType: 'NaptanMetroPlatform', additionalProperties: [], children: [] }] },
+  ],
+};
+
+// Trimmed from GET /StopPoint/940GZZLUKSX (2026-09-27), which returns the HUBKGX hub: the Underground
+// station and two National Rail stations each have their own values ("Help points" in lower case there).
+const KINGS_CROSS_HUB = {
+  naptanId: 'HUBKGX', commonName: "King's Cross & St Pancras International", modes: ['bus', 'international-rail', 'national-rail', 'tube'],
+  additionalProperties: [fac('Lifts', '10'), np('BikePoints_4'), np('BikePoints_14'), np('BikePoints_34')],
+  children: [
+    { naptanId: '910GKNGX', commonName: "London King's Cross Rail Station", modes: ['national-rail'],
+      additionalProperties: [fac('Cash Machines', 'yes'), fac('Help points', 'yes'), fac('Ticket Halls', 'yes'), fac('Toilets', 'yes'), fac('WiFi', 'yes'), { category: 'Address', key: 'PhoneNo', value: '0330 024 0215' }], children: [] },
+    { naptanId: '910GSTPX', commonName: 'London St Pancras International Rail Station', modes: ['national-rail'], additionalProperties: [{ category: 'Geo', key: 'Zone', value: '1' }], children: [] },
+    { naptanId: '940GZZLUKSX', commonName: "King's Cross St. Pancras Underground Station", modes: ['tube'],
+      additionalProperties: [
+        fac('Toilets', 'no'), fac('Cash Machines', '9'), fac('Ticket Halls', '4'), fac('Lifts', '10'), fac('WiFi', 'yes'),
+        fac('Help Points', '0 on platforms, 0 in ticket halls, 0 elsewhere'), fac('Escalators', '19'), fac('Payphones', '4'),
+        { category: 'VisitorCentre', key: 'Location', value: 'Western Ticket Hall Underground Station' },
+        { category: 'Address', key: 'PhoneNo', value: '0845 330 9880' },
+        np('BikePoints_4'), np('BikePoints_14'), np('BikePoints_70'), np('TaxiRank_5237'),
+      ], children: [] },
+  ],
+};
+
+test('stationFacilities labels hub children by network and keeps the facilities we show', () => {
+  const groups = T.stationFacilities(KINGS_CROSS_HUB);
+  assert.equal(groups.length, 2);
+  const [tube, rail] = groups;
+  assert.equal(tube.label, 'Underground');
+  assert.deepEqual(tube.ids, ['940GZZLUKSX']);
+  assert.deepEqual(tube.items.map((i) => [i.label, i.value]), [
+    ['Lifts', '10'], ['Escalators', '19'], ['Toilets', 'No'], ['Wi-Fi', 'Yes'], ['Cash machines', '9'], ['Ticket halls', '4'], ['Help points', 'None listed'],
+  ]);
+  assert.equal(tube.visitorCentre, 'Western Ticket Hall Underground Station');
+  assert.equal(tube.phone, '0845 330 9880');
+  // Payphones and photo booths are skipped.
+  assert.ok(!tube.items.some((i) => /pay|photo/i.test(i.label)));
+  assert.equal(rail.label, 'National Rail');
+  assert.deepEqual(rail.names, ["London King's Cross Rail Station"]);
+  // "Help points" (lower-case p) from the National Rail data is matched too.
+  assert.equal(rail.items.find((i) => i.key === 'help points').value, 'Yes');
+});
+
+test('stationFacilities merges children with identical values (Stratford)', () => {
+  const groups = T.stationFacilities(STRATFORD_HUB);
+  assert.equal(groups.length, 1);
+  assert.deepEqual(groups[0].ids, ['910GSTFD', '940GZZDLSTD', '940GZZLUSTD']);
+  assert.equal(groups[0].label, 'Underground, Elizabeth line, DLR, Overground & National Rail');
+  assert.equal(groups[0].items.find((i) => i.key === 'lifts').value, '5');
+  assert.equal(groups[0].items.find((i) => i.key === 'toilets').kind, 'yes');
+});
+
+test('stationFacilities uses the stop itself when it is a single station, and copes with nothing', () => {
+  // Trimmed from GET /StopPoint/940GZZLUOXC (2026-09-27).
+  const oxc = { naptanId: '940GZZLUOXC', commonName: 'Oxford Circus Underground Station', modes: ['tube'],
+    additionalProperties: [fac('Lifts', '0'), fac('Help Points', '18 on platforms, 0 in ticket halls, 18 elsewhere'), fac('Toilets', 'no')], children: [] };
+  const [g] = T.stationFacilities(oxc);
+  assert.equal(g.label, 'Underground');
+  assert.deepEqual(g.items.map((i) => i.value), ['0', 'No', '18 on platforms, 0 in ticket halls, 18 elsewhere']);
+  assert.deepEqual(T.stationFacilities({ naptanId: 'X', additionalProperties: [], children: [] }), []);
+  assert.deepEqual(T.stationFacilities(null), []);
+});
+
+test('facilityValue', () => {
+  assert.deepEqual(T.facilityValue('yes'), { value: 'Yes', kind: 'yes' });
+  assert.deepEqual(T.facilityValue('NO'), { value: 'No', kind: 'no' });
+  assert.deepEqual(T.facilityValue('07'), { value: '7', kind: 'count' });
+  assert.equal(T.facilityValue('0 on platforms, 0 in ticket halls, 0 elsewhere').kind, 'none');
+});
+
+test('nearbyBikePointIds collects BikePoints from the stop and its children, without taxis or repeats', () => {
+  assert.deepEqual(T.nearbyBikePointIds(KINGS_CROSS_HUB), ['BikePoints_4', 'BikePoints_14', 'BikePoints_34', 'BikePoints_70']);
+  assert.deepEqual(T.nearbyBikePointIds(STRATFORD_HUB), ['BikePoints_790', 'BikePoints_785']);
+  assert.deepEqual(T.nearbyBikePointIds({}), []);
+});
+
+test('nearestBikePoints ranks docks by distance and keeps bike and dock counts', () => {
+  // GET /Occupancy/BikePoints/BikePoints_4,BikePoints_14,BikePoints_34,BikePoints_70 (2026-09-27)
+  const occupancy = [
+    { id: 'BikePoints_4', name: "St. Chad's Street, King's Cross", bikesCount: 12, emptyDocks: 8, totalDocks: 23, standardBikesCount: 11, eBikesCount: 1 },
+    { id: 'BikePoints_14', name: 'Argyle Street, Kings Cross', bikesCount: 4, emptyDocks: 38, totalDocks: 45, standardBikesCount: 4, eBikesCount: 0 },
+    { id: 'BikePoints_34', name: "Pancras Road, King's Cross", bikesCount: 7, emptyDocks: 4, totalDocks: 16, standardBikesCount: 7, eBikesCount: 0 },
+    { id: 'BikePoints_70', name: "Calshot Street , King's Cross", bikesCount: 4, emptyDocks: 19, totalDocks: 24, standardBikesCount: 3, eBikesCount: 1 },
+  ];
+  // GET /Place?type=BikePoint&lat=51.531683&lon=-0.123538&radius=800 (2026-09-27), trimmed; BikePoints_34 left out.
+  const places = { centrePoint: [51.531, -0.123], places: [
+    { id: 'BikePoints_70', commonName: "Calshot Street , King's Cross", distance: 413.2, placeType: 'BikePoint', lat: 51.5, lon: -0.1 },
+    { id: 'BikePoints_4', commonName: "St. Chad's Street, King's Cross", distance: 175.4, placeType: 'BikePoint', lat: 51.53, lon: -0.12 },
+    { id: 'BikePoints_14', commonName: 'Argyle Street, Kings Cross', distance: 188.1, placeType: 'BikePoint', lat: 51.53, lon: -0.12 },
+  ] };
+  const docks = T.nearestBikePoints(occupancy, places, 3);
+  assert.deepEqual(docks.map((d) => d.id), ['BikePoints_4', 'BikePoints_14', 'BikePoints_70']);
+  assert.deepEqual(docks[0], { id: 'BikePoints_4', name: "St. Chad's Street, King's Cross", bikes: 12, standardBikes: 11, eBikes: 1, emptyDocks: 8, totalDocks: 23, distance: 175 });
+  assert.equal(docks[2].name, "Calshot Street, King's Cross");
+  // Without distances, the listed order is kept.
+  assert.deepEqual(T.nearestBikePoints(occupancy, null, 5).map((d) => d.id), ['BikePoints_4', 'BikePoints_14', 'BikePoints_34', 'BikePoints_70']);
+  assert.equal(T.nearestBikePoints(occupancy, null, 5)[0].distance, null);
+  assert.deepEqual(T.nearestBikePoints(null, null), []);
+});
+
+test('normalizeStationDisruptions removes exact duplicates and ended notices', () => {
+  const mildmay = 'MILDMAY LINE: Sunday 27 September, after 2215, no service between Camden Road and Stratford.';
+  // GET /StopPoint/HUBSRA/Disruption?getFamily=true&flattenResponse=true (2026-09-27), descriptions shortened:
+  // the Mildmay notice came back once per mode.
+  const raw = ['elizabeth-line', 'national-rail', 'overground'].map((mode) => ({
+    atcoCode: '910GSTFD', fromDate: '2026-09-27T21:15:00Z', toDate: '2026-09-28T00:29:00Z', description: mildmay,
+    commonName: 'Stratford (London) Rail Station', type: 'Part Closure', mode, stationAtcoCode: '910GSTFD', appearance: 'PlannedWork',
+  }));
+  raw.push({
+    atcoCode: '940GZZLUSTD', fromDate: '2026-09-26T03:32:00Z', toDate: '2026-09-28T00:29:00Z',
+    description: 'CENTRAL LINE: Saturday 26 September & Sunday 27 September, no service between Liverpool Street and Woodford / Newbury Park.',
+    commonName: 'Stratford Underground Station', type: 'Part Closure', mode: 'tube', stationAtcoCode: '940GZZLUSTD', appearance: 'PlannedWork',
+    additionalInformation: 'Replacement bus services operate:Service CL4: Day Service Only',
+  });
+  raw.push({ atcoCode: '940GZZLUSTD', fromDate: '2026-09-01T00:00:00Z', toDate: '2026-09-02T00:00:00Z', description: 'Old notice', mode: 'tube' });
+
+  const notices = T.normalizeStationDisruptions(raw, new Date('2026-09-27T10:00:00Z'));
+  assert.equal(notices.length, 2);
+  // Notices in force come first, then upcoming ones.
+  const [central, mild] = notices;
+  assert.equal(central.upcoming, false);
+  assert.equal(central.additionalInformation, 'Replacement bus services operate:Service CL4: Day Service Only');
+  assert.deepEqual(central.stations, [{ id: '940GZZLUSTD', name: 'Stratford Underground Station' }]);
+  assert.equal(mild.upcoming, true);
+  assert.equal(mild.type, 'Part Closure');
+  assert.equal(mild.appearance, 'PlannedWork');
+  assert.deepEqual(mild.modes, ['elizabeth-line', 'national-rail', 'overground']);
+  assert.equal(mild.stations.length, 1);
+  assert.deepEqual(T.normalizeStationDisruptions([], new Date()), []);
+  assert.deepEqual(T.normalizeStationDisruptions(null), []);
+});
+
+test('getStation keeps the raw stop, and station disruptions ask for one id with getFamily', async () => {
+  const seen = [];
+  const client = T.createClient({ fetch: async (url) => {
+    seen.push(url);
+    if (url.includes('/Disruption')) return { ok: true, json: async () => [] };
+    return { ok: true, json: async () => ({ naptanId: '940GZZLUOXC', commonName: 'Oxford Circus', lines: [{ id: 'victoria', name: 'Victoria' }],
+      lineGroup: [{ stationAtcoCode: '940GZZLUOXC', lineIdentifier: ['victoria'] }], lineModeGroups: [{ modeName: 'tube', lineIdentifier: ['victoria'] }], additionalProperties: [], children: [] }) };
+  } });
+  const station = await client.getStation('940GZZLUOXC');
+  assert.equal(station.stop.naptanId, '940GZZLUOXC');
+  assert.equal(station.lines[0].id, 'victoria');
+  await client.getStationDisruptions('HUBSRA');
+  assert.equal(seen[1], 'https://api.tfl.gov.uk/StopPoint/HUBSRA/Disruption?getFamily=true&flattenResponse=true');
+  await client.getBikeOccupancy(['BikePoints_4', 'BikePoints_14']);
+  assert.equal(seen[2], 'https://api.tfl.gov.uk/Occupancy/BikePoints/BikePoints_4,BikePoints_14');
+});
+
+// ---------------------------------------------------------------------------
 // Network status (Package B)
 // ---------------------------------------------------------------------------
 

@@ -8,6 +8,9 @@
  *     GET /StopPoint/{id}/Arrivals                live arrivals per platform
  *     GET /StopPoint/{id}/Crowding/{line}         static train-loading data per line
  *     GET /Line/{ids}/Status                      line status / disruption
+ *     GET /StopPoint/{id}/Disruption              station disruption notices (one id per call)
+ *     GET /Occupancy/BikePoints/{ids}             live Santander Cycles availability
+ *     GET /Place?type=BikePoint&lat&lon&radius    bike dock distances (to rank the nearest)
  *     GET /Line/Mode/{modes}/Status               status of every line in these modes (network strip)
  *     GET /Line/{ids}/Status/{from}/to/{to}       planned closures over a date range
  *   Crowding API
@@ -436,6 +439,175 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Station information: facilities, station disruption notices, nearby Santander Cycles
+  // ---------------------------------------------------------------------------
+
+  // Facility keys worth showing, in display order. Matched ignoring case: TfL's own data says
+  // "Help Points" while the National Rail data on 910G stations says "Help points".
+  const FACILITY_KEYS = [
+    { key: 'lifts', label: 'Lifts' },
+    { key: 'escalators', label: 'Escalators' },
+    { key: 'toilets', label: 'Toilets' },
+    { key: 'wifi', label: 'Wi-Fi' },
+    { key: 'cash machines', label: 'Cash machines' },
+    { key: 'ticket halls', label: 'Ticket halls' },
+    { key: 'help points', label: 'Help points' },
+  ];
+  const FACILITY_MODE_ORDER = [...RAIL_MODES, 'national-rail', 'international-rail'];
+  const FACILITY_MODE_LABELS = { ...MODE_LABELS, 'national-rail': 'National Rail', 'international-rail': 'International rail' };
+
+  function propsOf(node, category) {
+    return ((node && node.additionalProperties) || []).filter((p) => p && p.category === category);
+  }
+
+  /** "yes"/"no"/"10"/"0 on platforms, 0 in ticket halls, 0 elsewhere" → {value, kind: 'yes'|'no'|'count'|'text'} */
+  function facilityValue(raw) {
+    const text = String(raw === null || raw === undefined ? '' : raw).trim();
+    if (/^yes$/i.test(text)) return { value: 'Yes', kind: 'yes' };
+    if (/^no$/i.test(text)) return { value: 'No', kind: 'no' };
+    if (/^\d+$/.test(text)) return { value: String(Number(text)), kind: 'count' };
+    // Help points come as a breakdown; all zeros means TfL lists none (KSX says this, which is doubtful).
+    const nums = text.match(/\d+/g);
+    if (nums && nums.every((n) => Number(n) === 0)) return { value: 'None listed', kind: 'none' };
+    return { value: text, kind: 'text' };
+  }
+
+  /**
+   * Facilities from a /StopPoint/{id} response. For a hub (e.g. HUBSRA) the values are on the
+   * child stations (940G/910G), so they are collected per child and labelled by network.
+   * Children listing exactly the same values (all of Stratford's do) are merged into one group.
+   * → [{ids, names, label, items: [{key, label, value, kind}], visitorCentre, phone}]
+   */
+  function stationFacilities(stop) {
+    if (!stop || typeof stop !== 'object') return [];
+    const nodes = [];
+    (function walk(n) {
+      if (!n || typeof n !== 'object') return;
+      nodes.push(n);
+      (n.children || []).forEach(walk);
+    })(stop);
+    const hasFacilities = (n) => propsOf(n, 'Facility').length > 0;
+    let sources = nodes.filter((n) => isStationNaptan(n.naptanId || n.id) && hasFacilities(n));
+    if (!sources.length && hasFacilities(stop)) sources = [stop];
+
+    const groups = [];
+    const seen = new Map();
+    for (const n of sources) {
+      const facilities = new Map();
+      for (const p of propsOf(n, 'Facility')) facilities.set(String(p.key || '').toLowerCase(), p.value);
+      const items = FACILITY_KEYS.filter((f) => facilities.has(f.key)).map((f) => ({ key: f.key, label: f.label, ...facilityValue(facilities.get(f.key)) }));
+      const visitor = propsOf(n, 'VisitorCentre').find((p) => p.key === 'Location');
+      const phone = propsOf(n, 'Address').find((p) => p.key === 'PhoneNo');
+      const group = {
+        ids: [n.naptanId || n.id],
+        names: [String(n.commonName || n.naptanId || n.id)],
+        modes: (n.modes || []).filter((m) => FACILITY_MODE_ORDER.includes(m)),
+        items,
+        visitorCentre: visitor ? String(visitor.value) : null,
+        phone: phone ? String(phone.value) : null,
+      };
+      if (!items.length && !group.visitorCentre) continue;
+      const sig = JSON.stringify([items, group.visitorCentre, group.phone]);
+      if (seen.has(sig)) {
+        const g = seen.get(sig);
+        g.ids.push(...group.ids);
+        g.names.push(...group.names);
+        for (const m of group.modes) if (!g.modes.includes(m)) g.modes.push(m);
+        continue;
+      }
+      seen.set(sig, group);
+      groups.push(group);
+    }
+    const rank = (g) => Math.min(...g.modes.map((m) => FACILITY_MODE_ORDER.indexOf(m)), FACILITY_MODE_ORDER.length);
+    return groups
+      .map((g) => {
+        const modes = g.modes.sort((a, b) => FACILITY_MODE_ORDER.indexOf(a) - FACILITY_MODE_ORDER.indexOf(b));
+        const labels = modes.map((m) => FACILITY_MODE_LABELS[m]);
+        const label = labels.length <= 1 ? labels[0] || 'Station' : labels.slice(0, -1).join(', ') + ' & ' + labels[labels.length - 1];
+        return { ...g, modes, label };
+      })
+      .sort((a, b) => rank(a) - rank(b));
+  }
+
+  /** Santander Cycles docks the station lists as NearestPlaces (root and child stations), in listed order. */
+  function nearbyBikePointIds(stop) {
+    const out = [];
+    (function walk(n) {
+      if (!n || typeof n !== 'object') return;
+      for (const p of propsOf(n, 'NearestPlaces')) {
+        const id = String(p.value || '');
+        if (p.key === 'SourceSystemPlaceId' && /^BikePoints_\d+$/.test(id) && !out.includes(id)) out.push(id);
+      }
+      (n.children || []).forEach(walk);
+    })(stop);
+    return out;
+  }
+
+  /**
+   * /Occupancy/BikePoints/{ids} plus (optionally) /Place?type=BikePoint&lat&lon&radius for distances
+   * → the `limit` nearest docks [{id, name, bikes, standardBikes, eBikes, emptyDocks, totalDocks, distance}].
+   * NearestPlaces is in id order, not distance order, so docks without a known distance go last.
+   */
+  function nearestBikePoints(occupancy, places, limit) {
+    const distances = new Map();
+    const list = Array.isArray(places) ? places : (places && places.places) || [];
+    for (const p of list) if (p && p.id && Number.isFinite(p.distance)) distances.set(p.id, p.distance);
+    const num = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : null);
+    return (Array.isArray(occupancy) ? occupancy : [])
+      .filter((o) => o && o.id)
+      .map((o, i) => ({
+        id: o.id,
+        name: String(o.name || o.id).replace(/\s+,/g, ','),
+        bikes: num(o.bikesCount),
+        standardBikes: num(o.standardBikesCount),
+        eBikes: num(o.eBikesCount),
+        emptyDocks: num(o.emptyDocks),
+        totalDocks: num(o.totalDocks),
+        distance: distances.has(o.id) ? Math.round(distances.get(o.id)) : null,
+        order: i,
+      }))
+      .sort((a, b) => (a.distance === null) - (b.distance === null) || (a.distance || 0) - (b.distance || 0) || a.order - b.order)
+      .slice(0, limit || 5)
+      .map(({ order, ...rest }) => rest);
+  }
+
+  /**
+   * /StopPoint/{id}/Disruption?getFamily=true&flattenResponse=true → unique notices still in force.
+   * TfL repeats a notice once per mode (Stratford's Mildmay notice came back 3 times), so notices are
+   * de-duplicated on description + fromDate, keeping every mode and station they were listed for.
+   * → [{description, additionalInformation, type, appearance, fromDate, toDate, upcoming, modes, stations: [{id, name}]}]
+   */
+  function normalizeStationDisruptions(raw, now) {
+    const nowMs = (now || new Date()).getTime();
+    const byKey = new Map();
+    for (const d of Array.isArray(raw) ? raw : []) {
+      if (!d || !d.description) continue;
+      const key = String(d.description).trim() + '|' + (d.fromDate || '');
+      const to = Date.parse(d.toDate);
+      if (Number.isFinite(to) && to < nowMs) continue;
+      if (!byKey.has(key)) {
+        const from = Date.parse(d.fromDate);
+        byKey.set(key, {
+          description: String(d.description).trim(),
+          additionalInformation: d.additionalInformation ? String(d.additionalInformation).trim() : null,
+          type: d.type ? String(d.type) : null,
+          appearance: d.appearance ? String(d.appearance) : null,
+          fromDate: d.fromDate || null,
+          toDate: d.toDate || null,
+          upcoming: Number.isFinite(from) && from > nowMs,
+          modes: [],
+          stations: [],
+        });
+      }
+      const n = byKey.get(key);
+      if (d.mode && !n.modes.includes(d.mode)) n.modes.push(d.mode);
+      const id = d.atcoCode || d.stationAtcoCode;
+      if (id && !n.stations.some((s) => s.id === id)) n.stations.push({ id, name: String(d.commonName || id) });
+    }
+    return [...byKey.values()].sort((a, b) => a.upcoming - b.upcoming || String(a.fromDate).localeCompare(String(b.fromDate)));
+  }
+
+  // ---------------------------------------------------------------------------
   // Network status: all-lines strip and planned closures
   // ---------------------------------------------------------------------------
 
@@ -727,12 +899,29 @@
             let hub = await get(`/StopPoint/${enc(stop.hubNaptanCode)}`);
             if (Array.isArray(hub)) hub = hub[0];
             const model = buildStationModel(hub);
-            if (model.lines.length) return model;
+            // Keep the raw stop too: facilities and nearby bike docks are read from it.
+            if (model.lines.length) return { ...model, stop: hub };
           } catch (e) {
             /* fall back to the stop itself */
           }
         }
-        return buildStationModel(stop);
+        return { ...buildStationModel(stop), stop };
+      },
+
+      /** Disruption notices for a station and its family. One id per call: several ids return ApiArgumentException. */
+      async getStationDisruptions(id) {
+        return normalizeStationDisruptions(await get(`/StopPoint/${enc(id)}/Disruption`, { getFamily: 'true', flattenResponse: 'true' }));
+      },
+
+      /** Live bikes and free docks for BikePoints_* ids (one request for all of them). */
+      async getBikeOccupancy(ids) {
+        if (!ids.length) return [];
+        return get(`/Occupancy/BikePoints/${ids.map(enc).join(',')}`);
+      },
+
+      /** Bike docks within `radius` metres, with distances (used only to rank the station's NearestPlaces). */
+      async getBikePointsNear(lat, lon, radius) {
+        return get('/Place', { type: 'BikePoint', lat, lon, radius });
       },
 
       async getLiveCrowding(naptan) {
@@ -801,6 +990,11 @@
     summarizePassengerFlows,
     quieterTimeHint,
     liftDisruptionsFor,
+    stationFacilities,
+    facilityValue,
+    nearbyBikePointIds,
+    nearestBikePoints,
+    normalizeStationDisruptions,
     networkStatusList,
     closureDateRange,
     upcomingClosures,

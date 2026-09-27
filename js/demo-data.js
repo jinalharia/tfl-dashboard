@@ -59,6 +59,124 @@
     HUBWAT: 'Waterloo',
   };
 
+  // Station information (package A): facilities, nearby bike docks and station notices, shaped like
+  // /StopPoint/{id} additionalProperties, /Occupancy/BikePoints/{ids}, /Place?type=BikePoint and
+  // /StopPoint/{id}/Disruption. Values are loosely based on the real responses from 2026-09-27.
+  const FACILITIES = {
+    '940GZZLUKSX': { Lifts: '10', Escalators: '19', Toilets: 'no', WiFi: 'yes', 'Cash Machines': '9', 'Ticket Halls': '4', 'Help Points': '0 on platforms, 0 in ticket halls, 0 elsewhere', Payphones: '4' },
+    '940GZZLUOXC': { Lifts: '0', Escalators: '14', Toilets: 'no', WiFi: 'yes', 'Cash Machines': '3', 'Ticket Halls': '2', 'Help Points': '18 on platforms, 0 in ticket halls, 18 elsewhere' },
+    '940GZZLUBNK': { Lifts: '12', Escalators: '33', Toilets: 'no', WiFi: 'yes', 'Ticket Halls': '5' },
+    '940GZZDLBNK': { Lifts: '4', Escalators: '6', Toilets: 'no', WiFi: 'yes', 'Ticket Halls': '1' },
+    '940GZZLUWLO': { Lifts: '7', Escalators: '23', Toilets: 'yes', WiFi: 'yes', 'Cash Machines': '6', 'Ticket Halls': '3' },
+  };
+  const STRATFORD_FACILITIES = { Lifts: '5', Escalators: '2', Toilets: 'yes', WiFi: 'yes', 'Cash Machines': '4', 'Ticket Halls': '2', 'Help Points': '0 on platforms, 0 in ticket halls, 0 elsewhere' };
+  const BIKE_DOCKS = {
+    BikePoints_4: { name: "St. Chad's Street, King's Cross", total: 23, lat: 51.530059, lon: -0.120973 },
+    BikePoints_14: { name: 'Argyle Street, Kings Cross', total: 45, lat: 51.530558, lon: -0.123171 },
+    BikePoints_70: { name: "Calshot Street , King's Cross", total: 24, lat: 51.531048, lon: -0.117362 },
+    BikePoints_798: { name: "Birkenhead Street, King's Cross", total: 26, lat: 51.530199, lon: -0.122299 },
+    BikePoints_116: { name: 'Little Argyll Street, West End', total: 21, lat: 51.514499, lon: -0.141423 },
+    BikePoints_313: { name: 'Wells Street, Fitzrovia', total: 38, lat: 51.517931, lon: -0.138304 },
+    BikePoints_349: { name: 'St. George Street, Mayfair', total: 18, lat: 51.513093, lon: -0.143986 },
+    BikePoints_6: { name: 'Broadcasting House, Marylebone', total: 18, lat: 51.518117, lon: -0.144228 },
+    BikePoints_790: { name: 'Stratford Station, Stratford', total: 30, lat: 51.541793, lon: -0.003853 },
+    BikePoints_785: { name: 'Aquatic Centre, Queen Elizabeth Olympic Park', total: 40, lat: 51.540940, lon: -0.010511 },
+    BikePoints_340: { name: 'Bank of England Museum, Bank', total: 22, lat: 51.514441, lon: -0.087587 },
+    BikePoints_101: { name: 'Queen Street 1, Bank', total: 24, lat: 51.511553, lon: -0.092940 },
+    BikePoints_154: { name: 'Waterloo Station 3, Waterloo', total: 55, lat: 51.503791, lon: -0.112824 },
+    BikePoints_361: { name: 'Waterloo Station 2, Waterloo', total: 44, lat: 51.504027, lon: -0.113864 },
+  };
+  const NEAREST_BIKES = {
+    '940GZZLUKSX': ['BikePoints_4', 'BikePoints_14', 'BikePoints_70', 'BikePoints_798'],
+    '940GZZLUOXC': ['BikePoints_6', 'BikePoints_116', 'BikePoints_313', 'BikePoints_349'],
+    '940GZZLUSTD': ['BikePoints_785', 'BikePoints_790'],
+    '910GSTFD': ['BikePoints_785', 'BikePoints_790'],
+    '940GZZLUBNK': ['BikePoints_101', 'BikePoints_340'],
+    '940GZZLUWLO': ['BikePoints_154', 'BikePoints_361'],
+  };
+  const COORDS = {
+    '940GZZLUKSX': [51.530312, -0.123853], '940GZZLUOXC': [51.515224, -0.141903], '940GZZLUSTD': [51.541806, -0.003458],
+    '910GSTFD': [51.541895, -0.003397], '940GZZDLSTD': [51.541806, -0.003458], '940GZZLUBNK': [51.513356, -0.088899],
+    '940GZZDLBNK': [51.513356, -0.088899], '940GZZLUWLO': [51.503299, -0.11478],
+    HUBKGX: [51.531683, -0.123538], HUBSRA: [51.541508, -0.00241], HUBBAN: [51.513356, -0.088899], HUBWAT: [51.503299, -0.11478],
+  };
+
+  function stationProps(naptan) {
+    const facilities = NAPTANS[naptan] && NAPTANS[naptan].hub === 'HUBSRA' ? STRATFORD_FACILITIES : FACILITIES[naptan] || {};
+    return [
+      ...Object.entries(facilities).map(([key, value]) => ({ category: 'Facility', key, sourceSystemKey: 'StaticObjects', value })),
+      ...(naptan === '940GZZLUKSX' ? [{ category: 'VisitorCentre', key: 'Location', sourceSystemKey: 'StaticObjects', value: 'Western Ticket Hall Underground Station' }] : []),
+      { category: 'Address', key: 'PhoneNo', sourceSystemKey: 'StaticObjects', value: '0845 330 9880' },
+      ...(NEAREST_BIKES[naptan] || []).concat(['TaxiRank_5237']).map((value) => ({ category: 'NearestPlaces', key: 'SourceSystemPlaceId', sourceSystemKey: 'StaticObjects', value })),
+    ];
+  }
+
+  function distanceM(lat1, lon1, lat2, lon2) {
+    const r = Math.PI / 180;
+    const x = (lon2 - lon1) * r * Math.cos(((lat1 + lat2) / 2) * r);
+    const y = (lat2 - lat1) * r;
+    return Math.sqrt(x * x + y * y) * 6371000;
+  }
+
+  function bikeOccupancy(ids) {
+    const slot = Math.floor(Date.now() / 60000);
+    return ids.filter((id) => BIKE_DOCKS[id]).map((id) => {
+      const dock = BIKE_DOCKS[id];
+      const bikes = id === 'BikePoints_116' ? 0 : Math.round(rand(id + slot) * dock.total * 0.7);
+      const eBikes = Math.min(bikes, Math.round(rand(id + 'e' + slot) * 3));
+      const broken = Math.round(rand(id + 'x') * 2);
+      return {
+        $type: 'Tfl.Api.Presentation.Entities.BikePointOccupancy, Tfl.Api.Presentation.Entities',
+        id, name: dock.name, bikesCount: bikes, emptyDocks: Math.max(0, dock.total - bikes - broken), totalDocks: dock.total,
+        standardBikesCount: bikes - eBikes, eBikesCount: eBikes,
+      };
+    });
+  }
+
+  function bikePlaces(lat, lon, radius) {
+    const places = Object.entries(BIKE_DOCKS)
+      .map(([id, d]) => ({ $type: 'Tfl.Api.Presentation.Entities.Place, Tfl.Api.Presentation.Entities', id, url: `/Place/${id}`, commonName: d.name, distance: distanceM(lat, lon, d.lat, d.lon), placeType: 'BikePoint', lat: d.lat, lon: d.lon }))
+      .filter((p) => p.distance <= radius);
+    return { $type: 'Tfl.Api.Presentation.Entities.PlacesResponse, Tfl.Api.Presentation.Entities', centrePoint: [lat, lon], places };
+  }
+
+  function stationDisruptions(id) {
+    const day = (offset, hh, mm) => {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() + offset);
+      d.setUTCHours(hh, mm, 0, 0);
+      return d.toISOString().replace('.000Z', 'Z');
+    };
+    const point = (atcoCode, commonName, mode, extra) => ({
+      $type: 'Tfl.Api.Presentation.Entities.DisruptedPoint, Tfl.Api.Presentation.Entities',
+      atcoCode, stationAtcoCode: atcoCode, commonName, mode, ...extra,
+    });
+    if (id === 'HUBSRA' || NAPTANS[id] && NAPTANS[id].hub === 'HUBSRA') {
+      // Like the real response: the rail notice is repeated once per mode.
+      const mildmay = {
+        fromDate: day(0, 21, 15), toDate: day(1, 0, 29), type: 'Part Closure', appearance: 'PlannedWork',
+        description: 'MILDMAY LINE: After 2215 tonight, no service between Camden Road and Stratford. Rail replacement buses run between Camden Road and Stratford.',
+      };
+      return [
+        point('910GSTFD', 'Stratford (London) Rail Station', 'elizabeth-line', mildmay),
+        point('910GSTFD', 'Stratford (London) Rail Station', 'national-rail', mildmay),
+        point('910GSTFD', 'Stratford (London) Rail Station', 'overground', mildmay),
+        point('940GZZLUSTD', 'Stratford Underground Station', 'tube', {
+          fromDate: day(-1, 3, 32), toDate: day(1, 0, 29), type: 'Part Closure', appearance: 'PlannedWork',
+          description: 'CENTRAL LINE: No service between Liverpool Street and Woodford / Newbury Park this weekend. Replacement buses operate.',
+          additionalInformation: 'Replacement bus services operate: Service CL5: Stratford City Bus Station - Leyton - Leytonstone - Snaresbrook - South Woodford - Woodford.',
+        }),
+      ];
+    }
+    if (id === '940GZZLUOXC') {
+      return [point('940GZZLUOXC', 'Oxford Circus Underground Station', 'tube', {
+        fromDate: day(-20, 2, 7), toDate: day(1, 0, 29), type: 'Interchange Message', appearance: 'RealTime',
+        description: 'Oxford Circus Station: reduced escalator service - there is no up escalator in service from the Central line due to a fault.',
+      })];
+    }
+    return [];
+  }
+
   // Deterministic pseudo-random numbers so the demo is stable within a minute.
   function rand(seed) {
     let h = 2166136261;
@@ -97,7 +215,8 @@
       lines: info.lines.map((id) => ({ id, name: LINE_NAMES[id], type: 'Line' })),
       lineGroup: [{ stationAtcoCode: naptan, lineIdentifier: info.lines }],
       lineModeGroups: modes.map((mode) => ({ modeName: mode, lineIdentifier: info.lines.filter((l) => (LINE_MODE[l] || 'tube') === mode) })),
-      additionalProperties: [{ category: 'Geo', key: 'Zone', value: naptan.includes('BNK') || naptan.includes('OXC') || naptan.includes('KSX') ? '1' : '2/3' }],
+      additionalProperties: [{ category: 'Geo', key: 'Zone', value: naptan.includes('BNK') || naptan.includes('OXC') || naptan.includes('KSX') ? '1' : '2/3' }, ...stationProps(naptan)],
+      lat: (COORDS[naptan] || [])[0], lon: (COORDS[naptan] || [])[1],
       children: [],
     };
   }
@@ -107,7 +226,7 @@
     return {
       naptanId: id, id, commonName: HUBS[id], stopType: 'TransportInterchange', modes: [...new Set(children.flatMap((c) => c.modes))],
       lines: children.flatMap((c) => c.lines), lineGroup: [], lineModeGroups: [],
-      additionalProperties: children[0].additionalProperties, children,
+      additionalProperties: children[0].additionalProperties, lat: COORDS[id][0], lon: COORDS[id][1], children,
     };
   }
 
@@ -295,11 +414,16 @@
       const id = parts[1];
       if (lower[2] === 'arrivals') return NAPTANS[id] ? arrivals(id) : [];
       if (lower[2] === 'crowding') return trainLoadings(id, parts[3]);
+      if (lower[2] === 'disruption') return HUBS[id] || NAPTANS[id] ? stationDisruptions(id) : null;
       if (HUBS[id]) return hub(id);
       if (NAPTANS[id]) return stopPoint(id);
       return null;
     }
     if (lower[0] === 'disruptions' && lower[1] === 'lifts') return liftDisruptions();
+    if (lower[0] === 'occupancy' && lower[1] === 'bikepoints' && parts[2]) return bikeOccupancy(parts[2].split(','));
+    if (lower[0] === 'place' && !parts[1] && u.searchParams.get('type') === 'BikePoint') {
+      return bikePlaces(Number(u.searchParams.get('lat')), Number(u.searchParams.get('lon')), Number(u.searchParams.get('radius')) || 800);
+    }
     if (lower[0] === 'line' && lower[2] === 'route' && lower[3] === 'sequence') return routeSequence(parts[1]);
     if (lower[0] === 'line' && lower[1] === 'mode' && lower[3] === 'status') return networkStatus(parts[2].split(','));
     if (lower[0] === 'line' && lower[2] === 'status' && lower[4] === 'to') return statusRange(parts[1].split(','));
