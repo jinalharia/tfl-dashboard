@@ -11,6 +11,8 @@
  *     GET /StopPoint/{id}/Disruption              station disruption notices (one id per call)
  *     GET /Occupancy/BikePoints/{ids}             live Santander Cycles availability
  *     GET /Place?type=BikePoint&lat&lon&radius    bike dock distances (to rank the nearest)
+ *     GET /Line/Mode/{modes}/Status               status of every line in these modes (network strip)
+ *     GET /Line/{ids}/Status/{from}/to/{to}       planned closures over a date range
  *   Crowding API
  *     GET /crowding/{naptan}/Live                 live station busyness (% of baseline)
  *     GET /crowding/{naptan}/{dayOfWeek}          typical busyness in 15-minute bands
@@ -606,6 +608,110 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Network status: all-lines strip and planned closures
+  // ---------------------------------------------------------------------------
+
+  /**
+   * /Line/Mode/{modes}/Status → [{id, name, mode, colour, cls, description, reasons}],
+   * worst status first, then by mode (Underground first) and name.
+   */
+  function networkStatusList(raw) {
+    const lines = new Map();
+    for (const l of Array.isArray(raw) ? raw : []) if (l && l.id && !lines.has(l.id)) lines.set(l.id, l);
+    const statuses = normalizeStatuses([...lines.values()]);
+    const modeIdx = (m) => (RAIL_MODES.includes(m) ? RAIL_MODES.indexOf(m) : RAIL_MODES.length);
+    return [...lines.values()]
+      .map((l) => {
+        const s = statuses.get(l.id);
+        return { id: l.id, name: l.name || l.id, mode: l.modeName || null, colour: lineColour(l.id), cls: s.cls, description: s.description, reasons: s.reasons };
+      })
+      .sort((a, b) => STATUS_RANK[b.cls] - STATUS_RANK[a.cls] || modeIdx(a.mode) - modeIdx(b.mode) || a.name.localeCompare(b.name));
+  }
+
+  /** London calendar date as YYYY-MM-DD. */
+  function londonDate(date) {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+  }
+
+  /** {start, end} as YYYY-MM-DD for /Line/{ids}/Status/{start}/to/{end}: today in London and `days` later. */
+  function closureDateRange(date, days) {
+    const start = londonDate(date || new Date());
+    const [y, m, d] = start.split('-').map(Number);
+    const end = new Date(Date.UTC(y, m - 1, d + (days === undefined ? 14 : days))).toISOString().slice(0, 10);
+    return { start, end };
+  }
+
+  /** TfL timestamps carry a trailing Z; treat any without a zone as UTC too. */
+  function parseTflDate(text) {
+    if (!text) return NaN;
+    const s = String(text);
+    return Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z');
+  }
+
+  /**
+   * /Line/{ids}/Status/{start}/to/{end} → upcoming or planned entries, soonest first:
+   *   [{lineId, lineName, colour, severity, cls, description, reason, from, to, current, planned}]
+   * Drops Good Service, periods that have ended, and live incidents that have already started
+   * (those are in the line's current status). Ongoing planned works are kept, marked `current`.
+   * TfL can repeat an entry, so identical line + reason + period entries are merged.
+   */
+  function upcomingClosures(raw, now) {
+    const t = (now || new Date()).getTime();
+    const seen = new Set();
+    const out = [];
+    for (const line of Array.isArray(raw) ? raw : []) {
+      for (const s of (line && line.lineStatuses) || []) {
+        const cls = statusClass(s.statusSeverity);
+        if (cls === 'good') continue;
+        const category = String(pick(s.disruption, 'category') || '');
+        const planned = /planned/i.test(category) || /planned/i.test(s.statusSeverityDescription || '');
+        for (const p of s.validityPeriods || []) {
+          const from = parseTflDate(p && p.fromDate);
+          const to = parseTflDate(p && p.toDate);
+          if (!Number.isFinite(from)) continue;
+          if (Number.isFinite(to) && to <= t) continue;
+          const current = from <= t;
+          if (current && !planned) continue;
+          const lineId = line.id || s.lineId;
+          const reason = String(s.reason || pick(s.disruption, 'description') || '').trim();
+          const key = [lineId, reason, from, to].join('|');
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push({
+            lineId,
+            lineName: line.name || lineId,
+            colour: lineColour(lineId),
+            severity: s.statusSeverity,
+            cls,
+            description: s.statusSeverityDescription || 'Disruption',
+            reason,
+            from: new Date(from).toISOString(),
+            to: Number.isFinite(to) ? new Date(to).toISOString() : null,
+            current,
+            planned,
+          });
+        }
+      }
+    }
+    return out.sort((a, b) => a.from.localeCompare(b.from) || a.lineName.localeCompare(b.lineName));
+  }
+
+  /** "Sat 3 Oct 01:30–04:30" or "Sat 3 Oct 04:30 – Sun 4 Oct 01:29", in London time. */
+  function formatPeriod(fromIso, toIso) {
+    const fmt = (iso) => {
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+      }).formatToParts(new Date(iso));
+      const get = (type) => (parts.find((p) => p.type === type) || {}).value || '';
+      return { day: `${get('weekday')} ${get('day')} ${get('month')}`, time: `${get('hour')}:${get('minute')}` };
+    };
+    const a = fmt(fromIso);
+    if (!toIso) return `From ${a.day} ${a.time}`;
+    const b = fmt(toIso);
+    return a.day === b.day ? `${a.day} ${a.time}–${b.time}` : `${a.day} ${a.time} – ${b.day} ${b.time}`;
+  }
+
+  // ---------------------------------------------------------------------------
   // Boarding estimate: how many trains you may have to let go before boarding
   // ---------------------------------------------------------------------------
 
@@ -830,6 +936,18 @@
         return get(`/StopPoint/${enc(naptan)}/Arrivals`);
       },
 
+      /** Every line in the given modes (default: all rail modes), in one request. */
+      async getNetworkStatus(modes) {
+        return networkStatusList(await get(`/Line/Mode/${(modes || RAIL_MODES).map(enc).join(',')}/Status`));
+      },
+
+      /** Planned closures and other upcoming entries for these lines over the next `days` days. */
+      async getUpcomingClosures(lineIds, days) {
+        if (!lineIds.length) return [];
+        const { start, end } = closureDateRange(new Date(), days);
+        return upcomingClosures(await get(`/Line/${lineIds.map(enc).join(',')}/Status/${start}/to/${end}`));
+      },
+
       async getLineStatuses(lineIds) {
         if (!lineIds.length) return new Map();
         return normalizeStatuses(await get(`/Line/${lineIds.map(enc).join(',')}/Status`));
@@ -877,6 +995,10 @@
     nearbyBikePointIds,
     nearestBikePoints,
     normalizeStationDisruptions,
+    networkStatusList,
+    closureDateRange,
+    upcomingClosures,
+    formatPeriod,
     LOADING_SCALE_MAX,
     ALIGHTING_SHARE,
     DIRECTION_NAMES,

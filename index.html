@@ -28,6 +28,15 @@
     </div>
   </header>
 
+  <section id="network-status" class="network-status" aria-labelledby="network-title">
+    <div class="network-head">
+      <h2 id="network-title" class="network-title">Network status</h2>
+      <span id="network-summary" class="muted small" role="status">Loading line status…</span>
+    </div>
+    <ul id="network-lines" class="network-lines" aria-label="Status of every Underground, Elizabeth line, DLR, Overground and Tram line"></ul>
+    <div id="network-detail" class="network-detail" hidden></div>
+  </section>
+
   <nav id="quick-picks" class="quick-picks" aria-label="Popular stations"></nav>
 
   <main id="content">
@@ -83,6 +92,12 @@
         <div id="lines" class="lines"></div>
       </section>
 
+      <section id="closures-section" aria-labelledby="closures-title">
+        <h2 id="closures-title" class="section-title">Planned closures in the next 14 days</h2>
+        <p class="section-sub muted">Planned works and other changes TfL has announced for the lines at this station, soonest first. Times are London time.</p>
+        <div id="closures" class="closures"></div>
+      </section>
+
       <section class="about card">
         <h2 class="card-title">About the data</h2>
         <ul>
@@ -92,6 +107,8 @@
           <li><strong>Typical train loading</strong> — <code>/StopPoint/{naptan}/Crowding/{line}</code>, shown per direction relative to that direction’s busiest time slice, where TfL publishes it.</li>
           <li><strong>Quieter-time hint</strong> — looks ahead up to 3 hours in today’s typical profile for the first half-hour that drops a crowding band below the current reading.</li>
           <li><strong>Typical passenger flow</strong> — the <code>passengerFlows</code> values TfL returns with <code>/StopPoint/{naptan}/Crowding/{line}</code>, summed per 15 minutes. TfL doesn’t label the individual flows (for example entries vs interchanges), so treat it as relative busyness for that line at this station. TfL gives one profile with no day of the week; its morning and evening peaks suggest a weekday pattern.</li>
+          <li><strong>Network status</strong> — <code>/Line/Mode/tube,elizabeth-line,dlr,overground,tram/Status</code>: the current status of every line, worst first, refreshed every 60 seconds.</li>
+          <li><strong>Planned closures</strong> — <code>/Line/{ids}/Status/{from}/to/{to}</code> for today and the next 14 days. The list shows TfL’s planned works that are running now or start later, and any other change that hasn’t started yet. Live delays already under way are left out here because they’re in each line’s current status. TfL sometimes repeats an entry, so identical ones are shown once.</li>
           <li><strong>Lift faults</strong> — <code>/Disruptions/Lifts/v2/</code>, the feed behind tfl.gov.uk’s step-free information. It isn’t in the published API docs, so if it’s unavailable the dashboard simply doesn’t show lift status.</li>
           <li><strong>Station notices</strong> — <code>/StopPoint/{id}/Disruption?getFamily=true&amp;flattenResponse=true</code> for the station and its child stations. TfL repeats a notice once per mode, so repeats with the same text and start time are shown once. Notices whose end date has passed are hidden.</li>
           <li><strong>Facilities</strong> — the <code>Facility</code> entries in <code>/StopPoint/{id}</code>, shown per network at interchanges. These are TfL’s static listings and may be out of date. For example, King’s Cross lists “0” help points. When several stations at an interchange list identical figures (as at Stratford), they are shown once.</li>

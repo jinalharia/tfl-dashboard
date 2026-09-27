@@ -2,6 +2,8 @@
 
 A static HTML dashboard showing **live crowding for every line at a London station**, built on the [TfL Unified API](https://api.tfl.gov.uk/swagger/ui/index.html) and the TfL Crowding API.
 
+A **network status strip** under the top bar shows every Underground, Elizabeth line, DLR, Overground and Tram line, with lines that have problems first. It shows even before you choose a station. Select a disrupted line to read TfL's details.
+
 Search for a station (or pick a popular one) and the dashboard shows:
 
 - **Live busyness per station entrance group.** TfL publishes crowding per station NaPTAN, and interchanges have one per network. At Stratford, for example, the Underground (Central, Jubilee), the Elizabeth line and Overground, and the DLR each get their own live reading, compared with what's usual for this time of day.
@@ -17,6 +19,7 @@ Search for a station (or pick a popular one) and the dashboard shows:
   - disruption notices TfL has posted for the station (e.g. part closures, escalator faults), with dates
   - facilities (lifts, escalators, toilets, Wi-Fi, cash machines, ticket halls, help points), per network at interchanges
   - the nearest Santander Cycles docks with live bikes, e-bikes and free docks
+- **Planned closures in the next 14 days** for the station's lines: TfL's planned works that are running now or start later, grouped by line, with London dates and times.
 - **A quieter-time hint** for each entrance group, e.g. "Usually quieter from 18:45 (about 40%)", from today's typical profile.
 
 The page refreshes live data every 60 seconds. You can switch this off.
@@ -46,6 +49,8 @@ Opening `index.html` directly from disk also works.
 | Typical busyness for today | `GET /crowding/{naptan}/{dayOfWeek}` → `timeBands[].percentageOfBaseLine`, AM/PM peak bands |
 | Line status | `GET /Line/{ids}/Status` |
 | Next trains | `GET /StopPoint/{naptan}/Arrivals` |
+| Network status strip (every line) | `GET /Line/Mode/tube,elizabeth-line,dlr,overground,tram/Status` → one entry per line (20 on 2026-09-27) with `lineStatuses[]` |
+| Planned closures, next 14 days | `GET /Line/{ids}/Status/{YYYY-MM-DD}/to/{YYYY-MM-DD}` → `lineStatuses[].validityPeriods[{fromDate, toDate}]`, `reason`, `disruption.category` (`PlannedWork`) |
 | Route order (to find the previous station in each direction) | `GET /Line/{id}/Route/Sequence/all` → `orderedLineRoutes[].naptanIds`, names from `stopPointSequences[].stopPoint[]` |
 | Typical train loading and passenger flow per line | `GET /StopPoint/{naptan}/Crowding/{line}?direction=all` → `lines[].crowding.trainLoadings` and `passengerFlows` |
 | Station disruption notices | `GET /StopPoint/{id}/Disruption?getFamily=true&flattenResponse=true` → `description`, `type`, `appearance`, `fromDate`, `toDate`, `additionalInformation`, `mode`. **One id per call**: a comma list with `getFamily` returns `ApiArgumentException`. Identical repeats (one per mode) are de-duplicated on `description` + `fromDate`. |
@@ -59,6 +64,8 @@ Opening `index.html` directly from disk also works.
 Crowding bands used for the labels: Quiet < 25%, Moderately busy 25–50%, Busy 50–75%, Very busy ≥ 75% of baseline.
 
 **Typical passenger flow** is the sum of the unlabelled `passengerFlows` values TfL returns per 15-minute slice. TfL doesn't say which are entries, exits or interchanges, or which day type the profile is for (its peaks look like a weekday). On weekends the card says so.
+
+**Planned closures** keeps entries that are TfL planned works (still running or yet to start) and any other entry that hasn't started yet. It drops Good Service, entries that have ended, and live incidents already under way, because those are in each line card's status. TfL sometimes sends the same entry twice, so identical ones are shown once.
 
 **Quieter-time hint** looks up to 3 hours ahead in today's typical profile. It finds the first half-hour that sits a crowding band below the current live reading, or, when it's quiet now, the next busier period.
 

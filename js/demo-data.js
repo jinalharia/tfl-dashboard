@@ -263,6 +263,64 @@
   }
 
 
+  // Every rail line, for /Line/Mode/{modes}/Status (the network status strip).
+  const NETWORK_LINES = [
+    ['bakerloo', 'tube'], ['central', 'tube'], ['circle', 'tube'], ['district', 'tube'], ['hammersmith-city', 'tube'],
+    ['jubilee', 'tube'], ['metropolitan', 'tube'], ['northern', 'tube'], ['piccadilly', 'tube'], ['victoria', 'tube'],
+    ['waterloo-city', 'tube'], ['elizabeth', 'elizabeth-line'], ['dlr', 'dlr'], ['liberty', 'overground'],
+    ['lioness', 'overground'], ['mildmay', 'overground'], ['suffragette', 'overground'], ['weaver', 'overground'],
+    ['windrush', 'overground'], ['tram', 'tram'],
+  ];
+  const NETWORK_NAMES = { liberty: 'Liberty', lioness: 'Lioness', suffragette: 'Suffragette', weaver: 'Weaver', windrush: 'Windrush', tram: 'Tram' };
+
+  function networkStatus(modes) {
+    const wanted = modes.map((m) => m.toLowerCase());
+    const lines = NETWORK_LINES.filter(([, mode]) => wanted.includes(mode));
+    return lineStatuses(lines.map(([id]) => id)).map((l, i) => {
+      const extra = { modeName: lines[i][1], name: LINE_NAMES[l.id] || NETWORK_NAMES[l.id] || l.id };
+      if (l.id === 'piccadilly') {
+        l.lineStatuses = [{ statusSeverity: 5, statusSeverityDescription: 'Part Closure', reason: 'PICCADILLY LINE: No service between Acton Town and Uxbridge. Replacement buses operate.' }];
+      }
+      return { ...l, ...extra };
+    });
+  }
+
+  /**
+   * /Line/{ids}/Status/{from}/to/{to}: planned works relative to now, in the real shape
+   * (lineStatuses[].validityPeriods + disruption.category). Includes one ongoing planned closure,
+   * one live incident (filtered out by the app), and a repeated entry, as TfL sometimes sends.
+   */
+  function statusRange(ids) {
+    const day = 24 * 3600 * 1000;
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const at = (days, hours, mins) => new Date(today.getTime() + days * day + ((hours || 0) * 60 + (mins || 0)) * 60000).toISOString().replace('.000Z', 'Z');
+    const toSat = (6 - today.getUTCDay() + 7) % 7 || 7;
+    const period = (from, to, isNow) => [{ fromDate: from, toDate: to, isNow: Boolean(isNow) }];
+    const planned = (id, severity, description, reason, from, to) => ({
+      lineId: id, statusSeverity: severity, statusSeverityDescription: description, reason,
+      validityPeriods: period(from, to), disruption: { category: 'PlannedWork', categoryDescription: 'PlannedWork', description: reason },
+    });
+    const works = {
+      central: [planned('central', 5, 'Part Closure', `CENTRAL LINE: Saturday and Sunday, no service between Liverpool Street and Woodford / Newbury Park. Replacement buses operate.`, at(toSat, 3, 30), at(toSat + 2, 0, 29))],
+      jubilee: [planned('jubilee', 5, 'Part Closure', 'JUBILEE LINE: Between 0130 and 0430, no service between Finchley Road and Stratford. Replacement buses operate.', at(3, 0, 30), at(3, 3, 30))],
+      elizabeth: [planned('elizabeth', 7, 'Reduced Service', 'ELIZABETH LINE: From 2200, a reduced service operates between Paddington and Heathrow Terminal 4 / 5.', at(5, 21), at(6, 0, 29))],
+      dlr: [
+        planned('dlr', 5, 'Part Closure', 'DOCKLANDS LIGHT RAILWAY: No service between Shadwell and Tower Gateway.', at(toSat + 1, 3, 30), at(toSat + 2, 0, 29)),
+        planned('dlr', 5, 'Part Closure', 'DOCKLANDS LIGHT RAILWAY: No service between Shadwell and Tower Gateway.', at(toSat + 1, 3, 30), at(toSat + 2, 0, 29)),
+      ],
+      northern: [
+        { lineId: 'northern', statusSeverity: 9, statusSeverityDescription: 'Minor Delays', reason: 'Northern Line: Minor delays due to an earlier signal failure at Camden Town.', validityPeriods: period(new Date(Date.now() - 3600000).toISOString(), at(1, 0, 29), true), disruption: { category: 'RealTime', categoryDescription: 'RealTime', description: '' } },
+        planned('northern', 5, 'Part Closure', 'NORTHERN LINE: Until the end of service tonight, no service between Kennington and Battersea Power Station.', new Date(Date.now() - 7200000).toISOString(), at(1, 0, 29)),
+      ],
+      'waterloo-city': [planned('waterloo-city', 4, 'Planned Closure', 'Waterloo & City line: service operates 06:00 until 00:30, Monday to Friday only. There is no service on Saturday or Sunday.', at(toSat, 3, 15), at(toSat + 1, 22, 59))],
+    };
+    return ids.map((id) => ({
+      id, name: LINE_NAMES[id] || NETWORK_NAMES[id] || id,
+      lineStatuses: works[id] || [{ statusSeverity: 10, statusSeverityDescription: 'Good Service', validityPeriods: [] }],
+    }));
+  }
+
   // Simplified route sequences (forward order = first direction code). Real data comes from
   // /Line/{id}/Route/Sequence/all; stations outside the demo set exist only as neighbours.
   const DEMO_ROUTES = {
@@ -367,6 +425,8 @@
       return bikePlaces(Number(u.searchParams.get('lat')), Number(u.searchParams.get('lon')), Number(u.searchParams.get('radius')) || 800);
     }
     if (lower[0] === 'line' && lower[2] === 'route' && lower[3] === 'sequence') return routeSequence(parts[1]);
+    if (lower[0] === 'line' && lower[1] === 'mode' && lower[3] === 'status') return networkStatus(parts[2].split(','));
+    if (lower[0] === 'line' && lower[2] === 'status' && lower[4] === 'to') return statusRange(parts[1].split(','));
     if (lower[0] === 'line' && lower[2] === 'status') return lineStatuses(parts[1].split(','));
     if (lower[0] === 'crowding' && parts[1]) {
       const naptan = parts[1];

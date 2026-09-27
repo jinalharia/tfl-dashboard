@@ -183,6 +183,7 @@
       return;
     }
     state.station = station;
+    loadClosures(station);
     document.title = `${station.name} · Live station crowding`;
 
     await Promise.all([loadProfiles(token), loadLive(token), loadTrainLoadings(token), loadStationInfo(token)]);
@@ -838,6 +839,168 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Network status strip (all lines) and planned closures for this station's lines
+  // ---------------------------------------------------------------------------
+  const CLOSURE_DAYS = 14;
+  const CLOSURE_REFRESH_MS = 30 * 60 * 1000;
+  const network = {
+    lines: null, // [{id, name, mode, colour, cls, description, reasons}]
+    error: null,
+    updatedAt: null,
+    selected: null, // line id whose details are open
+    timer: null,
+    seq: 0,
+  };
+  const closures = {
+    list: null, // upcomingClosures() result | Error | null while loading
+    stationId: null,
+    loadedAt: 0,
+    seq: 0,
+  };
+
+  async function loadNetworkStatus() {
+    const seq = ++network.seq;
+    try {
+      const lines = await state.client.getNetworkStatus();
+      if (seq !== network.seq) return;
+      network.lines = lines;
+      network.error = null;
+      network.updatedAt = new Date();
+    } catch (e) {
+      if (seq !== network.seq) return;
+      network.error = e;
+    }
+    renderNetworkStatus();
+  }
+
+  function renderNetworkStatus() {
+    const list = $('#network-lines');
+    const summary = $('#network-summary');
+    const lines = network.lines || [];
+    const disrupted = lines.filter((l) => l.cls !== 'good');
+    const time = network.updatedAt ? network.updatedAt.toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) : '';
+    if (network.error && !lines.length) summary.textContent = `Line status unavailable: ${network.error.message}`;
+    else if (!lines.length) summary.textContent = 'Loading line status…';
+    else {
+      const head = disrupted.length
+        ? `${disrupted.length} of ${lines.length} lines not running a good service`
+        : `Good service on all ${lines.length} lines`;
+      summary.textContent = `${head} · updated ${time}${network.error ? ' (latest refresh failed)' : ''}`;
+    }
+
+    let goodLabelDone = false;
+    list.innerHTML = lines.map((l) => {
+      const swatch = `<span class="swatch" style="--line:${esc(l.colour)}" aria-hidden="true"></span>`;
+      const icon = `<span class="status-icon" aria-hidden="true">${STATUS_ICONS[l.cls]}</span>`;
+      if (l.cls === 'good') {
+        const label = goodLabelDone ? '' : `<li class="net-group" aria-hidden="true">${icon.replace('status-icon', 'status-icon net-group-icon')}Good service</li>`;
+        goodLabelDone = true;
+        return `${label}<li class="net-line net-good status-good">${swatch}<span class="net-name">${esc(l.name)}</span><span class="visually-hidden">: ${esc(l.description)}</span></li>`;
+      }
+      const open = network.selected === l.id;
+      return `<li><button type="button" class="net-line status-${l.cls}${open ? ' open' : ''}" data-line="${esc(l.id)}" aria-expanded="${open}" aria-controls="network-detail">
+          ${swatch}<span class="net-name">${esc(l.name)}</span>${icon}<span class="net-desc">${esc(l.description)}</span></button></li>`;
+    }).join('');
+    renderNetworkDetail();
+  }
+
+  function renderNetworkDetail() {
+    const box = $('#network-detail');
+    const line = network.selected && (network.lines || []).find((l) => l.id === network.selected && l.cls !== 'good');
+    if (!line) {
+      network.selected = null;
+      box.hidden = true;
+      box.textContent = '';
+      return;
+    }
+    box.hidden = false;
+    box.dataset.line = line.id;
+    box.style.setProperty('--line', line.colour);
+    box.innerHTML = `<strong>${esc(line.name)}: ${esc(line.description)}</strong>${line.reasons.length
+      ? line.reasons.map((r) => `<p>${esc(r)}</p>`).join('')
+      : '<p>TfL gave no further details.</p>'}`;
+  }
+
+  function onNetworkClick(e) {
+    const btn = e.target.closest('button.net-line');
+    if (!btn) return;
+    network.selected = network.selected === btn.dataset.line ? null : btn.dataset.line;
+    for (const b of document.querySelectorAll('#network-lines button.net-line')) {
+      const open = b.dataset.line === network.selected;
+      b.classList.toggle('open', open);
+      b.setAttribute('aria-expanded', String(open));
+    }
+    renderNetworkDetail();
+  }
+
+  /** Planned closures for the station's lines; called when a station loads (and every 30 min after). */
+  async function loadClosures(station) {
+    const seq = ++closures.seq;
+    if (closures.stationId !== station.id) closures.list = null;
+    closures.stationId = station.id;
+    renderClosures();
+    const result = await settle(state.client.getUpcomingClosures(station.lines.map((l) => l.id), CLOSURE_DAYS));
+    if (seq !== closures.seq || state.station !== station) return;
+    // Keep the last good list if a background refresh fails.
+    if (!(result instanceof Error) || !Array.isArray(closures.list)) closures.list = result;
+    closures.loadedAt = Date.now();
+    renderClosures();
+  }
+
+  function renderClosures() {
+    const box = $('#closures');
+    const list = closures.list;
+    const station = state.station;
+    if (list === null) { box.innerHTML = '<p class="muted small">Loading planned closures…</p>'; return; }
+    if (list instanceof Error) { box.innerHTML = `<p class="muted small">Couldn’t load planned closures: ${esc(list.message)}</p>`; return; }
+    if (!list.length) {
+      box.innerHTML = `<p class="closures-none"><span class="status-icon" aria-hidden="true">${STATUS_ICONS.good}</span>No planned closures announced for these lines in the next ${CLOSURE_DAYS} days.</p>`;
+      return;
+    }
+    const groups = new Map();
+    for (const c of list) {
+      if (!groups.has(c.lineId)) groups.set(c.lineId, []);
+      groups.get(c.lineId).push(c);
+    }
+    const lineName = (id, fallback) => ((station && station.lines.find((l) => l.id === id)) || {}).name || fallback;
+    // Drop the "JUBILEE LINE:" style prefix TfL puts on reasons; the group heading already names the line.
+    const tidy = (r) => r.replace(/^[A-Z][A-Z&'. -]+:\s*/, '');
+    const unaffected = station ? station.lines.filter((l) => !groups.has(l.id)).map((l) => l.name) : [];
+    box.innerHTML = [...groups.entries()].map(([id, items]) => `
+      <article class="closure-line" data-line="${esc(id)}" style="--line:${esc(items[0].colour)}">
+        <h3><span class="swatch" aria-hidden="true"></span>${esc(lineName(id, items[0].lineName))}</h3>
+        <ul>${items.map((c) => `
+          <li class="closure">
+            <div class="closure-top">
+              <span class="closure-when">${c.current ? '<span class="closure-now">In progress</span>' : ''}${esc(T.formatPeriod(c.from, c.to))}</span>
+              <span class="status status-${c.cls}"><span class="status-icon" aria-hidden="true">${STATUS_ICONS[c.cls]}</span>${esc(c.description)}</span>
+            </div>
+            ${c.reason ? `<p class="closure-reason">${esc(tidy(c.reason))}</p>` : ''}
+          </li>`).join('')}
+        </ul>
+      </article>`).join('')
+      + (unaffected.length ? `<p class="muted small closures-clear">Nothing announced for: ${esc(unaffected.join(', '))}.</p>` : '');
+  }
+
+  function networkTick() {
+    if (document.visibilityState === 'hidden') return;
+    // With a station open, follow its auto-refresh switch; otherwise always keep the strip fresh.
+    if (state.station && !$('#auto-refresh').checked) return;
+    loadNetworkStatus();
+    if (state.station && Date.now() - closures.loadedAt > CLOSURE_REFRESH_MS) loadClosures(state.station);
+  }
+
+  function initNetworkStatus() {
+    $('#network-lines').addEventListener('click', onNetworkClick);
+    $('#refresh-now').addEventListener('click', loadNetworkStatus);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && (!network.updatedAt || Date.now() - network.updatedAt > REFRESH_MS)) loadNetworkStatus();
+    });
+    network.timer = setInterval(networkTick, REFRESH_MS);
+    loadNetworkStatus();
+  }
+
+  // ---------------------------------------------------------------------------
   // Settings
   // ---------------------------------------------------------------------------
   function openSettings() {
@@ -882,6 +1045,7 @@
     $('#refresh-now').addEventListener('click', refresh);
     $('#auto-refresh').addEventListener('change', startTimer);
     if (DEMO) $('#settings-open').hidden = true;
+    initNetworkStatus();
 
     let resizeTimer = null;
     window.addEventListener('resize', () => {
