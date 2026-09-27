@@ -434,6 +434,137 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Boarding estimate: how many trains you may have to let go before boarding
+  // ---------------------------------------------------------------------------
+
+  // TfL train-loading scores run 0–6 in observed data (6 on Bank → Waterloo at 17:45); 6 = full.
+  const LOADING_SCALE_MAX = 6;
+  // Assumed share of arriving passengers who get off at a through station (TfL doesn't publish this).
+  const ALIGHTING_SHARE = 0.3;
+
+  /** trainLoadings rows for one line: [{dir, to, start, value}] (dir is NB/SB/EB/WB as TfL gives it). */
+  function loadingRows(raw, line) {
+    const found = [];
+    (function walk(v) {
+      if (Array.isArray(v)) return v.forEach(walk);
+      if (!v || typeof v !== 'object') return;
+      for (const [k, child] of Object.entries(v)) {
+        if (k.toLowerCase() === 'trainloadings' && Array.isArray(child)) found.push(...child);
+        else walk(child);
+      }
+    })(raw);
+    const wanted = [slug(line.id), slug(line.name)];
+    return found
+      .filter((t) => !t.line || wanted.includes(slug(t.line)))
+      .map((t) => ({
+        dir: String(t.lineDirection || t.platformDirection || t.direction || '').toUpperCase(),
+        to: String(t.naptanTo || '').toUpperCase(),
+        start: parseClock(t.timeSlice),
+        value: Number(t.value),
+      }))
+      .filter((r) => r.start !== null && Number.isFinite(r.value));
+  }
+
+  /** The score for the 15-minute slice containing `minutes` (null if TfL has no row for that slice). */
+  function loadingAt(rows, minutes) {
+    const x = serviceMinutes(minutes);
+    const hit = rows.find((r) => {
+      const rx = serviceMinutes(r.start);
+      return rx <= x && x < rx + 15;
+    });
+    return hit ? hit.value : null;
+  }
+
+  /**
+   * From /Line/{id}/Route/Sequence/all, the stations a train calls at just before `stationId`
+   * when it is heading on to `nextId`. `origin` is true when the train starts at `stationId`
+   * in that direction (e.g. Waterloo & City eastbound at Waterloo), so it arrives empty.
+   */
+  function previousStations(routeSeq, stationId, nextId) {
+    const S = String(stationId).toUpperCase();
+    const N = String(nextId).toUpperCase();
+    const prev = new Set();
+    let matched = false;
+    let origin = false;
+    for (const r of (routeSeq && routeSeq.orderedLineRoutes) || []) {
+      const ids = (r.naptanIds || []).map((x) => String(x).toUpperCase());
+      for (let i = 0; i < ids.length - 1; i++) {
+        if (ids[i] !== S || ids[i + 1] !== N) continue;
+        matched = true;
+        if (i === 0) origin = true;
+        else prev.add(ids[i - 1]);
+      }
+    }
+    return { matched, origin: matched && prev.size === 0 && origin, prev: [...prev] };
+  }
+
+  /** Station names by NaPTAN from a route sequence response (for "towards Bank"). */
+  function routeStationNames(routeSeq) {
+    const out = new Map();
+    const clean = (n, id) => String(n || id).replace(/\s+(Underground|DLR|Rail)\s+Station$/i, '');
+    // stopPointSequences carry the station NaPTANs; `stations` uses hub ids (e.g. HUBBAN) at interchanges.
+    for (const seq of (routeSeq && routeSeq.stopPointSequences) || []) {
+      for (const sp of seq.stopPoint || []) {
+        const id = sp && (sp.stationId || sp.id);
+        if (id && !out.has(String(id).toUpperCase())) out.set(String(id).toUpperCase(), clean(sp.name, id));
+      }
+    }
+    for (const st of (routeSeq && routeSeq.stations) || []) {
+      if (st && st.id && !out.has(String(st.id).toUpperCase())) out.set(String(st.id).toUpperCase(), clean(st.name, st.id));
+    }
+    return out;
+  }
+
+  const BOARDING_BANDS = [
+    { key: 'board', label: 'Board the first train', trains: 0 },
+    { key: 'tight', label: 'First train, but it will be tight', trains: 0 },
+    { key: 'wait1', label: 'Expect to let 1 train go', trains: 1 },
+    { key: 'wait2', label: 'Expect to let 2 or more trains go', trains: 2 },
+  ];
+
+  /**
+   * Estimate for one direction. Scores are TfL train-loading values (0–6).
+   *   depart:  typical load leaving this station in this direction (this station's own row)
+   *   arrive:  typical load arriving from the previous station (ignored when origin is true)
+   *   origin:  the train starts here in this direction, so it arrives empty
+   *   liveFactor:    live ÷ typical station busyness now (1 when unknown)
+   *   serviceFactor: extra pressure from disruption or long gaps (1 = normal)
+   * Returns {ratio, band, trainsToLetGo, roomPct, arrivePct, departPct, saturated} or null.
+   */
+  function boardingEstimate({ depart, arrive, origin, liveFactor, serviceFactor }) {
+    if (depart === null || depart === undefined || !Number.isFinite(depart)) return null;
+    const d = Math.min(1, Math.max(0, depart / LOADING_SCALE_MAX));
+    const hasArrive = !origin && arrive !== null && arrive !== undefined && Number.isFinite(arrive);
+    const a = origin ? 0 : hasArrive ? Math.min(1, Math.max(0, arrive / LOADING_SCALE_MAX)) : d;
+    // Boarders: the departing load minus those assumed to stay on. When the load drops here
+    // (a busy interchange), still assume at least ALIGHTING_SHARE of the departing load got on here.
+    const board = Math.max(d - a * (1 - ALIGHTING_SHARE), d * ALIGHTING_SHARE);
+    const stay = d - board;
+    const room = Math.max(0.05, 1 - stay);
+    const f = Math.min(2.5, Math.max(0.5, liveFactor || 1));
+    const sf = Math.max(1, serviceFactor || 1);
+    let ratio = (board * f * sf) / room;
+    // A score at the top of the scale means trains usually leave full: demand is at least the room.
+    const saturated = depart >= LOADING_SCALE_MAX;
+    if (saturated) ratio = Math.max(ratio, f * sf);
+    let band;
+    if (ratio < 0.85) band = BOARDING_BANDS[0];
+    else if (ratio <= 1) band = BOARDING_BANDS[1];
+    else if (ratio <= 2) band = BOARDING_BANDS[2];
+    else band = BOARDING_BANDS[3];
+    return {
+      ratio,
+      band,
+      trainsToLetGo: ratio <= 1 ? 0 : Math.ceil(ratio) - 1,
+      roomPct: Math.round(room * 100),
+      arrivePct: Math.round(a * 100),
+      departPct: Math.round(d * 100),
+      arriveKnown: origin || hasArrive,
+      saturated,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
   // HTTP client
   // ---------------------------------------------------------------------------
 
@@ -520,6 +651,10 @@
         return get('/Disruptions/Lifts/v2/');
       },
 
+      async getRouteSequence(lineId) {
+        return get(`/Line/${enc(lineId)}/Route/Sequence/all`);
+      },
+
       async getTrainLoadings(naptan, lineId) {
         return get(`/StopPoint/${enc(naptan)}/Crowding/${enc(lineId)}`, { direction: 'all' });
       },
@@ -548,6 +683,14 @@
     summarizePassengerFlows,
     quieterTimeHint,
     liftDisruptionsFor,
+    LOADING_SCALE_MAX,
+    ALIGHTING_SHARE,
+    DIRECTION_NAMES,
+    loadingRows,
+    loadingAt,
+    previousStations,
+    routeStationNames,
+    boardingEstimate,
     lineColour,
   };
 

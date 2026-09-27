@@ -9,8 +9,7 @@ Search for a station (or pick a popular one) and the dashboard shows:
 - **A card for each line** with:
   - line status and disruption details
   - the live station busyness for the entrances that line uses, with a tick for what's usual now
-  - a *platform outlook* estimate (see below)
-  - typical train loading per direction, where TfL publishes it
+  - a *boarding estimate* per direction: whether you're likely to get on the first train or need to let one or more go (see below). Lines without loading data show the simpler *platform outlook* instead.
   - typical passenger flow for that line at the station by time of day, as a small chart
   - the next trains on each platform
 - **Step-free access alerts** when a lift at the station is out of service (or a note that none are reported).
@@ -43,6 +42,7 @@ Opening `index.html` directly from disk also works.
 | Typical busyness for today | `GET /crowding/{naptan}/{dayOfWeek}` → `timeBands[].percentageOfBaseLine`, AM/PM peak bands |
 | Line status | `GET /Line/{ids}/Status` |
 | Next trains | `GET /StopPoint/{naptan}/Arrivals` |
+| Route order (to find the previous station in each direction) | `GET /Line/{id}/Route/Sequence/all` → `orderedLineRoutes[].naptanIds`, names from `stopPointSequences[].stopPoint[]` |
 | Typical train loading and passenger flow per line | `GET /StopPoint/{naptan}/Crowding/{line}?direction=all` → `lines[].crowding.trainLoadings` and `passengerFlows` |
 | Lift faults (step-free access) | `GET /Disruptions/Lifts/v2/` → `stationUniqueId` (hub or station code), `disruptedLiftUniqueIds`, `message`. Used by tfl.gov.uk but not in the published swagger, so the dashboard hides lift status if it fails. |
 
@@ -54,7 +54,14 @@ Crowding bands used for the labels: Quiet < 25%, Moderately busy 25–50%, Busy 
 
 **Quieter-time hint** looks up to 3 hours ahead in today's typical profile. It finds the first half-hour that sits a crowding band below the current live reading, or, when it's quiet now, the next busier period.
 
-**Platform outlook** is this dashboard's own heuristic, not a TfL figure. It starts from the station's live level and raises it for disruption on that line (a full step for severe disruption, part of a step for minor delays) and a little when the next train is 8 or more minutes away.
+**Boarding estimate** is this dashboard's own estimate, not a TfL figure. For each direction it uses TfL's typical train-loading scores (0–6; 6 is full) for the current 15 minutes:
+- how full trains usually leave this station (this station's row to the next station)
+- how full they arrive: the previous station's row towards here, found from the route sequence. If the train *starts* here in that direction it arrives **empty**, as on the Waterloo & City line at both Waterloo and Bank. A row from the other direction ending here (e.g. Bank → Waterloo) is never used, because those passengers get off.
+- an assumed 30% of arriving passengers getting off. TfL doesn't publish alighting numbers.
+
+Boarders ÷ room gives a ratio, scaled by live ÷ typical station busyness, ×1.5 for severe disruption, ×1.2 for minor delays, and ×1.2 when the next train on that platform is 8+ minutes away. Up to 0.85 means board the first train, up to 1 means tight, up to 2 means let 1 train go, and more means let 2 or more go. When trains usually leave full (score 6), the ratio is at least the busyness and disruption factors, because the loading score can't show demand above full. TfL publishes no platform queue or live train-load data to check it against, so treat it as a rough guide.
+
+**Platform outlook** (lines without loading data) is this dashboard's own heuristic, not a TfL figure. It starts from the station's live level and raises it for disruption on that line (a full step for severe disruption, part of a step for minor delays) and a little when the next train is 8 or more minutes away.
 
 ## Project layout
 

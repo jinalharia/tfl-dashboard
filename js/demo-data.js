@@ -23,7 +23,7 @@
     victoria: ['Northbound - Platform 5', 'Southbound - Platform 6'],
     bakerloo: ['Northbound - Platform 3', 'Southbound - Platform 4'],
     piccadilly: ['Eastbound - Platform 5', 'Westbound - Platform 6'],
-    'waterloo-city': ['Platform 9'],
+    'waterloo-city': ['Eastbound - Platform 25', 'Westbound - Platform 9'],
   };
   const DESTINATIONS = {
     central: ['Epping', 'Hainault', 'Ealing Broadway', 'West Ruislip'],
@@ -50,11 +50,13 @@
     '940GZZDLSTD': { name: 'Stratford DLR Station', lines: ['dlr'], scale: 0.45, hub: 'HUBSRA' },
     '940GZZLUBNK': { name: 'Bank Underground Station', lines: ['central', 'northern', 'waterloo-city'], scale: 1.05, hub: 'HUBBAN' },
     '940GZZDLBNK': { name: 'Bank DLR Station', lines: ['dlr'], scale: 0.6, hub: 'HUBBAN' },
+    '940GZZLUWLO': { name: 'Waterloo Underground Station', lines: ['bakerloo', 'jubilee', 'northern', 'waterloo-city'], scale: 1.0, hub: 'HUBWAT' },
   };
   const HUBS = {
     HUBKGX: "King's Cross & St Pancras International",
     HUBSRA: 'Stratford',
     HUBBAN: 'Bank',
+    HUBWAT: 'Waterloo',
   };
 
   // Deterministic pseudo-random numbers so the demo is stable within a minute.
@@ -120,7 +122,7 @@
         let t = Math.round(rand(line + platform + minuteSeed) * 120) + 20;
         for (let i = 0; i < 4; i++) {
           const dests = DESTINATIONS[line] || ['Terminus'];
-          const dest = dests[(p + i) % dests.length];
+          const dest = line === 'waterloo-city' ? (p === 0 ? 'Bank' : 'Waterloo') : dests[(p + i) % dests.length];
           out.push({
             lineId: line, lineName: LINE_NAMES[line], platformName: platform, naptanId: naptan,
             destinationName: dest + (line === 'dlr' ? ' DLR Station' : ' Underground Station'),
@@ -141,14 +143,58 @@
     });
   }
 
+
+  // Simplified route sequences (forward order = first direction code). Real data comes from
+  // /Line/{id}/Route/Sequence/all; stations outside the demo set exist only as neighbours.
+  const DEMO_ROUTES = {
+    central: { dirs: ['EB', 'WB'], ids: ['940GZZLUNHG', '940GZZLUOXC', '940GZZLUBNK', '940GZZLULVT', '940GZZLUSTD', '940GZZLULYS'] },
+    victoria: { dirs: ['NB', 'SB'], ids: ['940GZZLUGPK', '940GZZLUOXC', '940GZZLUWRR', '940GZZLUKSX', '940GZZLUHAI'] },
+    jubilee: { dirs: ['EB', 'WB'], ids: ['940GZZLUWSM', '940GZZLUWLO', '940GZZLUCYF', '940GZZLUSTD'] },
+    northern: { dirs: ['NB', 'SB'], ids: ['940GZZLUKNG', '940GZZLUWLO', '940GZZLUBNK', '940GZZLUKSX', '940GZZLUCTN'] },
+    'waterloo-city': { dirs: ['EB', 'WB'], ids: ['940GZZLUWLO', '940GZZLUBNK'] },
+    bakerloo: { dirs: ['NB', 'SB'], ids: ['940GZZLULBN', '940GZZLUWLO', '940GZZLUOXC', '940GZZLUBST'] },
+    circle: { dirs: ['EB', 'WB'], ids: ['940GZZLUESQ', '940GZZLUKSX', '940GZZLUFCN'] },
+    'hammersmith-city': { dirs: ['EB', 'WB'], ids: ['940GZZLUESQ', '940GZZLUKSX', '940GZZLUFCN'] },
+    metropolitan: { dirs: ['EB', 'WB'], ids: ['940GZZLUESQ', '940GZZLUKSX', '940GZZLUFCN'] },
+    piccadilly: { dirs: ['EB', 'WB'], ids: ['940GZZLURSQ', '940GZZLUKSX', '940GZZLUCAR'] },
+  };
+  const DEMO_NAMES = {
+    '940GZZLUNHG': 'Notting Hill Gate', '940GZZLULVT': 'Liverpool Street', '940GZZLULYS': 'Leytonstone', '940GZZLUGPK': 'Green Park',
+    '940GZZLUWRR': 'Warren Street', '940GZZLUHAI': 'Highbury & Islington', '940GZZLUWSM': 'Westminster', '940GZZLUCYF': 'Canary Wharf',
+    '940GZZLUKNG': 'Kennington', '940GZZLUCTN': 'Camden Town', '940GZZLULBN': 'Lambeth North', '940GZZLUBST': 'Baker Street',
+    '940GZZLUESQ': 'Euston Square', '940GZZLUFCN': 'Farringdon', '940GZZLURSQ': 'Russell Square', '940GZZLUCAR': 'Caledonian Road',
+  };
+  const demoName = (id) => (NAPTANS[id] ? NAPTANS[id].name.replace(/ Underground Station$/, '') : DEMO_NAMES[id] || id);
+
+  function routeSequence(line) {
+    const r = DEMO_ROUTES[line];
+    if (!r) return { lineId: line, orderedLineRoutes: [], stopPointSequences: [], stations: [] };
+    const rev = [...r.ids].reverse();
+    return {
+      lineId: line,
+      orderedLineRoutes: [{ name: `${demoName(r.ids[0])} ↔ ${demoName(rev[0])}`, naptanIds: r.ids }, { name: `${demoName(rev[0])} ↔ ${demoName(r.ids[0])}`, naptanIds: rev }],
+      stopPointSequences: [{ stopPoint: r.ids.map((id) => ({ id, stationId: id, name: demoName(id) + ' Underground Station' })) }],
+      stations: [],
+    };
+  }
+
   function trainLoadings(naptan, line) {
     if ((LINE_MODE[line] || 'tube') !== 'tube') return [];
-    const dirs = (PLATFORMS[line] || ['Northbound', 'Southbound']).map((p) => p.split(' - ')[0]);
+    // Like the real response: one row per direction per 15-minute slice, scored 0–6, keyed by the next station.
     const rows = [];
-    for (const dir of dirs) {
-      for (let m = 5 * 60; m < 24 * 60; m += 15) {
-        const bias = rand(line + dir) * 0.4 + 0.6;
-        rows.push({ line: LINE_NAMES[line], lineDirection: dir.slice(0, 1) + 'B', platformDirection: dir.slice(0, 1) + 'B', direction: 'Inbound', naptanTo: '', timeSlice: root.TflApi.formatClock(m).replace(':', '') + '-' + root.TflApi.formatClock(m + 15).replace(':', ''), value: Math.round(1 + 5 * typical(naptan, 'MON', m) * bias) });
+    const r = DEMO_ROUTES[line];
+    const slice = (m) => root.TflApi.formatClock(m).replace(':', '') + '-' + root.TflApi.formatClock(m + 15).replace(':', '');
+    if (r) {
+      for (const [dir, order] of [[r.dirs[0], r.ids], [r.dirs[1], [...r.ids].reverse()]]) {
+        const i = order.indexOf(naptan);
+        if (i < 0 || i === order.length - 1) continue; // terminus in this direction: no onward row
+        const bias = 0.6 + 0.5 * rand(line + dir + naptan);
+        for (let m = 5 * 60; m < 24 * 60; m += 15) {
+          // Heavier towards the middle of the route, like real loads.
+          const mid = 1 - Math.abs(i / Math.max(1, order.length - 1) - 0.5);
+          const v = 5.5 * typical(NAPTANS[naptan] ? naptan : '940GZZLUOXC', 'MON', m) * bias * (0.6 + 0.6 * mid);
+          rows.push({ line: LINE_NAMES[line], lineDirection: dir, platformDirection: dir, direction: 'Inbound', naptanTo: order[i + 1], timeSlice: slice(m), value: Math.max(0, Math.min(6, Math.round(v))) });
+        }
       }
     }
     // Like the real response: ~10 unlabelled passengerFlows values per 15-minute slice.
@@ -161,7 +207,7 @@
         flows.push({ timeSlice: root.TflApi.formatClock(m).replace(':', '') + '-' + root.TflApi.formatClock(m + 15).replace(':', ''), value: Math.round((total / 10) * (0.4 + 1.2 * rand(line + m + k))) });
       }
     }
-    return { naptanId: naptan, commonName: NAPTANS[naptan].name, lines: [{ id: line, name: LINE_NAMES[line], crowding: { passengerFlows: flows, trainLoadings: rows } }] };
+    return { naptanId: naptan, commonName: demoName(naptan), lines: [{ id: line, name: LINE_NAMES[line], crowding: { passengerFlows: NAPTANS[naptan] ? flows : [], trainLoadings: rows } }] };
   }
 
   function liftDisruptions() {
@@ -190,12 +236,13 @@
     if (lower[0] === 'stoppoint' && parts[1]) {
       const id = parts[1];
       if (lower[2] === 'arrivals') return NAPTANS[id] ? arrivals(id) : [];
-      if (lower[2] === 'crowding') return NAPTANS[id] ? trainLoadings(id, parts[3]) : [];
+      if (lower[2] === 'crowding') return trainLoadings(id, parts[3]);
       if (HUBS[id]) return hub(id);
       if (NAPTANS[id]) return stopPoint(id);
       return null;
     }
     if (lower[0] === 'disruptions' && lower[1] === 'lifts') return liftDisruptions();
+    if (lower[0] === 'line' && lower[2] === 'route' && lower[3] === 'sequence') return routeSequence(parts[1]);
     if (lower[0] === 'line' && lower[2] === 'status') return lineStatuses(parts[1].split(','));
     if (lower[0] === 'crowding' && parts[1]) {
       const naptan = parts[1];
@@ -224,5 +271,5 @@
     };
   }
 
-  root.TflDemo = { createFetch, stations: Object.keys(HUBS).concat(['940GZZLUOXC']) };
+  root.TflDemo = { createFetch, stations: Object.keys(HUBS).concat(['940GZZLUOXC']), routeSequence };
 })(typeof window !== 'undefined' ? window : globalThis);
