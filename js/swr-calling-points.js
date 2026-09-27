@@ -368,7 +368,7 @@
       `from ${SOURCE_LABEL[model.source] || 'unknown source'}`,
     ].filter(Boolean).join(' · ');
 
-    return `<div class="swr-cp" data-source="${esc(model.source)}">
+    return `<div class="swr-cp" data-source="${esc(model.source)}"${o.serviceId ? ` data-service-id="${esc(o.serviceId)}"` : ''}>
       <p class="swr-cp-summary">${esc(summaryText(model))}</p>
       ${o.note ? `<p class="swr-cp-note" role="status">${esc(o.note)}</p>` : ''}
       ${toggle}
@@ -413,77 +413,173 @@
   }
 
   /**
-   * A plausible train for a service id at `nowMin` (minutes after midnight, London): how far it
-   * has got, how late it is and whether part of it is cancelled all depend on the id.
+   * The stopping pattern for a demo train: { stops: [[name, crs, minutes], ...], at }, where `at`
+   * is the index of the board's own station. With a `board` row (see demoBoardFor) the train
+   * calls at the board's station and runs towards the row's destination; without one it is
+   * Waterloo -> Reading with `at` 0.
    */
-  function demoPlan(id, nowMin) {
+  function demoPattern(board) {
+    if (!board || !board.crs) return { stops: DEMO_ROUTE, at: 0 };
+    const view = [board.name || board.crs, board.crs];
+    const dest = board.destination && board.destination.CrsCode
+      ? [board.destination.Name || board.destination.CrsCode, board.destination.CrsCode] : null;
+    if (board.bus || !dest) return { stops: [[...view, 0]].concat(dest ? [[...dest, 12]] : []), at: 0 };
+    const total = DEMO_ROUTE[DEMO_ROUTE.length - 1][2];
+    if (dest[1] === 'WAT') {
+      // Up train: Reading -> Waterloo, or from an off-route station via Surbiton.
+      let stops = DEMO_ROUTE.slice().reverse().map(([n, c, o]) => [n, c, total - o]);
+      let at = stops.findIndex((s) => s[1] === view[1]);
+      if (at < 0) {
+        const sur = stops.findIndex((s) => s[1] === 'SUR');
+        stops = [[...view, stops[sur][2] - 15]].concat(stops.slice(sur));
+        at = 0;
+      }
+      return { stops, at };
+    }
+    // Down train: from Waterloo (or from the board's station) towards the destination.
+    let stops = DEMO_ROUTE.slice();
+    let at = stops.findIndex((s) => s[1] === view[1]);
+    if (at < 0) { stops = [[...view, 0]]; at = 0; }
+    const d = stops.findIndex((s, i) => i > at && s[1] === dest[1]);
+    if (d >= 0) return { stops: stops.slice(0, d + 1), at };
+    const sur = stops.findIndex((s) => s[1] === 'SUR');
+    const keep = stops.slice(0, Math.max(at, sur) + 1);
+    return { stops: keep.concat([[...dest, keep[keep.length - 1][2] + 30]]), at };
+  }
+
+  /**
+   * A plausible train for a service id at `nowMin` (minutes after midnight, London). With a
+   * `board` row it is due at the board's station at the row's time, with the row's delay or
+   * cancellation. Without one, how far it has got and how late it is depend on the id.
+   * Returns { plan: [{name, crs, scheduled, estimated, actual, passed, cancelled}], at }.
+   */
+  function demoPlan(id, nowMin, board) {
     const h = hashId(id);
-    const progress = [-12, -3, 4, 14, 27, 50][h % 6];      // minutes since scheduled departure
-    const delay = [0, 0, 2, 5, 0, 14][Math.floor(h / 6) % 6];
-    const cancelFrom = h % 7 === 3 ? 14 : -1;               // index in DEMO_ROUTE (Wokingham)
-    const noEstimate = h % 11 === 5;                        // "Delayed" with no time yet
-    const dep = nowMin - progress;
-    return DEMO_ROUTE.map(([name, crs, off], i) => {
+    const { stops, at } = demoPattern(board);
+    const boardTime = board ? toMinutes(board.scheduled) : null;
+    let dep;
+    let delay;
+    let cancelFrom = -1;
+    let noEstimate = false;
+    if (boardTime !== null) {
+      const est = String(board.estimated || '');
+      dep = boardTime - stops[at][2];
+      delay = toMinutes(est) !== null ? Math.max(0, diffMinutes(est, board.scheduled)) : 0;
+      if (isDelayedText(est)) { delay = 10; noEstimate = true; }
+      if (isCancelledText(est)) cancelFrom = 0;
+    } else {
+      dep = nowMin - [-12, -3, 4, 14, 27, 50][h % 6];       // minutes since scheduled departure
+      delay = [0, 0, 2, 5, 0, 14][Math.floor(h / 6) % 6];
+      cancelFrom = h % 7 === 3 ? 14 : -1;                   // index in DEMO_ROUTE (Wokingham)
+      noEstimate = h % 11 === 5;                            // "Delayed" with no time yet
+    }
+    const plan = stops.map(([name, crs, off], i) => {
       const sched = dep + off;
       const cancelled = cancelFrom >= 0 && i >= cancelFrom;
-      const passed = !cancelled && sched + delay <= nowMin;
+      // A board row is still to come at the board's station, so only earlier stops can be passed.
+      const passed = !cancelled && diffMinutes(formatMinutes(nowMin), formatMinutes(sched + delay)) >= 0 && (boardTime === null || i < at);
       return {
-        name, crs, i, cancelled, passed,
+        name, crs, cancelled, passed,
         scheduled: formatMinutes(sched),
         actual: passed ? (delay ? formatMinutes(sched + delay) : 'On time') : null,
         estimated: cancelled ? 'Cancelled' : passed ? null : noEstimate && delay ? 'Delayed' : delay ? formatMinutes(sched + delay) : 'On time',
       };
     });
+    return { plan, at };
   }
 
   /** Railinfo-shaped body (POST /journey/services) for a demo service id. */
-  function demoRailinfoService(id, nowMin, generatedAt) {
-    const plan = demoPlan(id, nowMin);
-    const origin = plan[0];
+  function demoRailinfoService(id, nowMin, generatedAt, board) {
+    const { plan, at } = demoPlan(id, nowMin, board);
+    const here = plan[at];
+    const origin = at === 0;
     let last = null;
     plan.forEach((p) => { if (p.passed) last = p; });
     return {
       Id: null,
-      Destination: { Name: origin.name, CrsCode: origin.crs },
+      Destination: { Name: here.name, CrsCode: here.crs },
       LastLocation: last ? { Name: last.name, CrsCode: last.crs } : null,
       Operator: 'South Western Railway',
       Platform: String(1 + (hashId(id) % 19)),
-      ScheduledArrival: null, EstimatedArrival: null, ActualArrival: null,
-      ScheduledDeparture: origin.scheduled,
-      EstimatedDeparture: origin.passed ? null : origin.estimated,
-      ActualDeparture: origin.actual,
+      ScheduledArrival: origin ? null : here.scheduled,
+      EstimatedArrival: origin || here.passed ? null : here.estimated,
+      ActualArrival: origin ? null : here.actual,
+      ScheduledDeparture: here.scheduled,
+      EstimatedDeparture: here.passed ? null : here.estimated,
+      ActualDeparture: here.actual,
       GeneratedAt: generatedAt || new Date().toISOString(),
-      CallingPoints: plan.map((p, i) => ({
-        Station: { Name: p.name, CrsCode: p.crs },
-        // Like the real API, the origin row (the board's own station) has no times of its own.
-        ScheduledTime: i === 0 ? null : p.scheduled,
-        EstimatedTime: i === 0 ? null : p.estimated,
-        ActualTime: i === 0 ? null : p.actual,
-        IsVisited: i === 0 ? false : p.passed,
-      })),
+      CallingPoints: plan.map((p, i) => {
+        // Like the real API, the board's own row has no times of its own when it is the origin.
+        const blank = origin && i === 0;
+        return {
+          Station: { Name: p.name, CrsCode: p.crs },
+          ScheduledTime: blank ? null : p.scheduled,
+          EstimatedTime: blank ? null : p.estimated,
+          ActualTime: blank ? null : p.actual,
+          IsVisited: blank ? false : p.passed,
+        };
+      }),
     };
   }
 
   /** Huxley2-shaped body (GET /service/{id}) for a demo service id. */
-  function demoHuxleyService(id, nowMin, generatedAt) {
-    const plan = demoPlan(id, nowMin);
+  function demoHuxleyService(id, nowMin, generatedAt, board) {
+    const { plan, at } = demoPlan(id, nowMin, board);
     const length = [5, 8, 10, 10, 12][hashId(id) % 5];
-    const origin = plan[0];
+    const here = plan[at];
+    const origin = at === 0;
     const point = (p) => ({
       locationName: p.name, crs: p.crs, st: p.scheduled, et: p.estimated, at: p.actual,
       isCancelled: p.cancelled, length, detachFront: false, formation: null, adhocAlerts: null,
     });
+    const group = (list) => (list.length ? [{ callingPoint: list.map(point), serviceType: 0, serviceChangeRequired: false, assocIsCancelled: false }] : null);
     return {
       generatedAt: generatedAt || new Date().toISOString(),
-      locationName: origin.name, crs: origin.crs,
+      locationName: here.name, crs: here.crs,
       operator: 'South Western Railway', operatorCode: 'SW',
-      isCancelled: origin.cancelled, cancelReason: null, delayReason: null,
+      isCancelled: here.cancelled, cancelReason: null, delayReason: null,
       length, platform: String(1 + (hashId(id) % 19)),
-      sta: null, eta: null, ata: null,
-      std: origin.scheduled, etd: origin.passed ? null : origin.estimated, atd: origin.actual,
-      previousCallingPoints: null,
-      subsequentCallingPoints: [{ callingPoint: plan.slice(1).map(point), serviceType: 0, serviceChangeRequired: false, assocIsCancelled: false }],
+      sta: origin ? null : here.scheduled, eta: origin || here.passed ? null : here.estimated, ata: origin ? null : here.actual,
+      std: here.scheduled, etd: here.passed ? null : here.estimated, atd: here.actual,
+      previousCallingPoints: group(plan.slice(0, at)),
+      subsequentCallingPoints: group(plan.slice(at + 1)),
     };
+  }
+
+  // The station each service was opened from (set by onServiceOpen), so that in ?demo the
+  // demo train matches the departures-board row that was opened.
+  const demoViews = new Map();
+
+  function noteDemoView(id, crs) {
+    if (!id || !crs) return;
+    demoViews.delete(id);
+    demoViews.set(id, crs);
+    if (demoViews.size > 200) demoViews.delete(demoViews.keys().next().value);
+  }
+
+  /**
+   * The departures-board row for a demo service id, asked of the other demo routes (S1's
+   * railinfo departures fixture): { crs, name, scheduled, estimated, destination, bus } | null.
+   */
+  function demoBoardFor(id) {
+    const crs = demoViews.get(id);
+    const swr = root.SwrApi;
+    if (!crs || !swr || !Array.isArray(swr.demoRoutes)) return null;
+    const url = `https://railinfo.southwesternrailway.com/journey/departures/${encodeURIComponent(crs)}`;
+    for (const routeFn of swr.demoRoutes) {
+      if (routeFn === demoRoute) continue;
+      let body = null;
+      try { body = routeFn(url, { method: 'GET' }); } catch (e) { body = null; }
+      if (!body || !Array.isArray(body.Items)) continue;
+      const bus = (body.BusItems || []).find((x) => String(x.Id) === id);
+      const row = bus || body.Items.find((x) => String(x.Id) === id);
+      if (!row) continue;
+      return {
+        crs, name: (body.Station && body.Station.Name) || crs,
+        scheduled: row.ScheduledTime, estimated: row.EstimatedTime, destination: row.Destination || null, bus: !!bus,
+      };
+    }
+    return null;
   }
 
   /** SwrApi demo route: (url, options) => body | null. */
@@ -493,13 +589,13 @@
       let body = options && options.body;
       if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = null; } }
       const id = body && (body.ServiceId || body.serviceId);
-      return id ? demoRailinfoService(String(id), londonNowMinutes()) : null;
+      return id ? demoRailinfoService(String(id), londonNowMinutes(), null, demoBoardFor(String(id))) : null;
     }
     const m = /huxley2\.azurewebsites\.net\/service\/([^/?#]+)/i.exec(u);
     if (m) {
       let id = m[1];
       try { id = decodeURIComponent(id); } catch (e) { /* keep as is */ }
-      return demoHuxleyService(id, londonNowMinutes());
+      return demoHuxleyService(id, londonNowMinutes(), null, demoBoardFor(id));
     }
     return null;
   }
@@ -563,10 +659,22 @@
     return !own || own === id;
   }
 
+  // Controls whose focus survives a repaint (S1 re-dispatches the event on every refresh).
+  const FOCUSABLE = ['.swr-cp-toggle', '.swr-cp-about summary'];
+
   function paint(container, model, id, crs, note) {
     const uid = `swr-cp-${String(id).replace(/[^A-Za-z0-9_-]/g, '')}`;
+    const prevAbout = container.querySelector('.swr-cp-about');
+    const aboutOpen = !!(prevAbout && prevAbout.open);
+    const active = container.ownerDocument && container.ownerDocument.activeElement;
+    const focusSel = active && container.contains(active) ? FOCUSABLE.find((sel) => active.matches(sel)) : null;
     container.innerHTML = renderCallingPoints(model, { serviceId: id, expanded: state.expanded.has(id), note, uid });
     container.removeAttribute('aria-busy');
+    if (aboutOpen) container.querySelector('.swr-cp-about').open = true;
+    if (focusSel) {
+      const el = container.querySelector(focusSel);
+      if (el) el.focus();
+    }
     const btn = container.querySelector('.swr-cp-toggle');
     if (btn) {
       btn.addEventListener('click', () => {
@@ -584,11 +692,15 @@
     const id = d.serviceId ? String(d.serviceId) : '';
     if (!container || !id || typeof container.querySelector !== 'function') return;
     const crs = d.crs ? String(d.crs).toUpperCase() : null;
+    noteDemoView(id, crs);
     const token = ++state.seq;
     state.tokens.set(container, token);
 
     const known = state.remembered.get(id);
-    if (known) paint(container, toModel(known, crs), id, crs);
+    const shown = container.querySelector('.swr-cp');
+    if (shown && shown.getAttribute('data-service-id') === id) {
+      // Already showing this train (S1 kept the container across its refresh): update in place.
+    } else if (known) paint(container, toModel(known, crs), id, crs);
     else container.innerHTML = '<p class="swr-cp-loading" role="status">Loading calling points…</p>';
     container.setAttribute('aria-busy', 'true');
 
@@ -626,7 +738,10 @@
     formatUpdated,
     foldIndex,
     renderCallingPoints,
+    demoPattern,
     demoPlan,
+    noteDemoView,
+    demoBoardFor,
     demoRailinfoService,
     demoHuxleyService,
     demoRoute,

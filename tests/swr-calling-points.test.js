@@ -344,3 +344,56 @@ test('demo services are consistent across both sources and vary by id', () => {
   }
   for (const s of ['on-time', 'late', 'cancelled']) assert.ok(statuses.has(s), s);
 });
+
+test('demo trains follow the opened board row: its station, time, delay and destination', () => {
+  const at = '2026-09-27T18:00:00Z';
+  const now = 19 * 60;
+  const both = (id, board) => [
+    C.normalizeCallingPoints(C.demoRailinfoService(id, now, at, board), board.crs),
+    C.normalizeHuxleyCallingPoints(C.demoHuxleyService(id, now, at, board), board.crs),
+  ];
+  // Down train from Waterloo, 12 minutes from now, 15 late: nothing passed yet.
+  for (const m of both('A', { crs: 'WAT', name: 'London Waterloo', scheduled: '19:12', estimated: '19:27', destination: { Name: 'Portsmouth Harbour', CrsCode: 'PMH' } })) {
+    assert.equal(m.stops[0].crs, 'WAT');
+    assert.equal(m.stops[0].scheduled, '19:12');
+    assert.equal(m.stops[0].lateMinutes, 15);
+    assert.ok(m.stops[0].isViewing);
+    assert.equal(m.stops.at(-1).name, 'Portsmouth Harbour');
+    assert.equal(m.stops.some((s) => s.passed), false);
+  }
+  // Up train seen from Surbiton, due in 3 minutes: earlier stops passed, Surbiton still to come.
+  const [r, h] = both('B', { crs: 'SUR', name: 'Surbiton', scheduled: '19:03', estimated: 'On time', destination: { Name: 'London Waterloo', CrsCode: 'WAT' } });
+  assert.deepEqual(sameStops(h), sameStops(r));
+  const sur = r.stops.findIndex((s) => s.isViewing);
+  assert.equal(r.stops[sur].crs, 'SUR');
+  assert.equal(r.stops[sur].scheduled, '19:03');
+  assert.equal(r.stops[sur].passed, false);
+  assert.ok(r.stops[sur - 1].passed && r.stops[sur - 1].isLastReported);
+  assert.equal(r.stops.at(-1).crs, 'WAT');
+  // Off-route station and a cancelled row.
+  const [c] = both('C', { crs: 'WOK', name: 'Woking', scheduled: '19:20', estimated: 'Cancelled', destination: { Name: 'London Waterloo', CrsCode: 'WAT' } });
+  assert.equal(c.stops[0].crs, 'WOK');
+  assert.equal(c.allCancelled, true);
+  // "Delayed" with no estimate.
+  const [d] = both('D', { crs: 'CLJ', name: 'Clapham Junction', scheduled: '19:30', estimated: 'Delayed', destination: { Name: 'Guildford', CrsCode: 'GLD' } });
+  assert.equal(d.stops.find((s) => s.isViewing).status, 'delayed');
+  assert.equal(d.stops.at(-1).name, 'Guildford');
+});
+
+test('demoBoardFor finds the opened row through the other demo routes', () => {
+  const board = { Station: { Name: 'Surbiton', CrsCode: 'SUR' }, Items: [
+    { Id: 'X1', ScheduledTime: '19:03', EstimatedTime: 'On time', Destination: { Name: 'London Waterloo', CrsCode: 'WAT' } },
+  ], BusItems: [] };
+  const saved = globalThis.SwrApi;
+  globalThis.SwrApi = { demoRoutes: [C.demoRoute, (url) => (/journey\/departures\/SUR$/.test(url) ? board : null)] };
+  try {
+    assert.equal(C.demoBoardFor('X1'), null, 'unknown until the row is opened');
+    C.noteDemoView('X1', 'SUR');
+    assert.deepEqual(C.demoBoardFor('X1'), { crs: 'SUR', name: 'Surbiton', scheduled: '19:03', estimated: 'On time', destination: { Name: 'London Waterloo', CrsCode: 'WAT' }, bus: false });
+    const body = C.demoRoute('https://railinfo.southwesternrailway.com/journey/services', { method: 'POST', body: '{"ServiceId":"X1"}' });
+    assert.equal(body.Destination.CrsCode, 'SUR');
+    assert.equal(body.ScheduledDeparture, '19:03');
+  } finally {
+    globalThis.SwrApi = saved;
+  }
+});
