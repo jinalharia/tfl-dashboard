@@ -56,6 +56,16 @@
         <div id="tiles" class="tiles"></div>
       </section>
 
+      <section id="station-info" class="station-info" aria-labelledby="info-title" hidden>
+        <h2 id="info-title" class="section-title">Station information</h2>
+        <p class="section-sub muted">Notices TfL has posted for this station, its facilities, and Santander Cycles docks nearby.</p>
+        <div id="station-notices" class="card notices" hidden></div>
+        <div class="info-grid">
+          <article id="facilities" class="card info-card"></article>
+          <article id="bikes" class="card info-card"></article>
+        </div>
+      </section>
+
       <section id="chart-card" class="card chart-card" aria-labelledby="chart-title">
         <h2 id="chart-title" class="card-title">Today: typical vs live</h2>
         <p id="chart-sub" class="muted small"></p>
@@ -83,6 +93,9 @@
           <li><strong>Quieter-time hint</strong> — looks ahead up to 3 hours in today’s typical profile for the first half-hour that drops a crowding band below the current reading.</li>
           <li><strong>Typical passenger flow</strong> — the <code>passengerFlows</code> values TfL returns with <code>/StopPoint/{naptan}/Crowding/{line}</code>, summed per 15 minutes. TfL doesn’t label the individual flows (for example entries vs interchanges), so treat it as relative busyness for that line at this station. TfL gives one profile with no day of the week; its morning and evening peaks suggest a weekday pattern.</li>
           <li><strong>Lift faults</strong> — <code>/Disruptions/Lifts/v2/</code>, the feed behind tfl.gov.uk’s step-free information. It isn’t in the published API docs, so if it’s unavailable the dashboard simply doesn’t show lift status.</li>
+          <li><strong>Station notices</strong> — <code>/StopPoint/{id}/Disruption?getFamily=true&amp;flattenResponse=true</code> for the station and its child stations. TfL repeats a notice once per mode, so repeats with the same text and start time are shown once. Notices whose end date has passed are hidden.</li>
+          <li><strong>Facilities</strong> — the <code>Facility</code> entries in <code>/StopPoint/{id}</code>, shown per network at interchanges. These are TfL’s static listings and may be out of date. For example, King’s Cross lists “0” help points. When several stations at an interchange list identical figures (as at Stratford), they are shown once.</li>
+          <li><strong>Santander Cycles nearby</strong> — the docks TfL lists as <code>NearestPlaces</code> for the station, with live bikes, e-bikes and free docks from <code>/Occupancy/BikePoints/{ids}</code>. They are ranked by straight-line distance from <code>/Place?type=BikePoint</code> (not walking distance), and the nearest 5 are shown.</li>
           <li><strong>*Boarding estimate</strong> is this dashboard’s own estimate of whether you’ll get on the first train, per direction. It uses TfL’s typical train-loading scores (0–6, where 6 is full): how full trains usually leave this station, and how full they arrive from the previous station on the route (<code>/Line/{id}/Route/Sequence/all</code>). If a train starts here in that direction, for example the Waterloo &amp; City line at Waterloo or Bank, it arrives empty. It assumes about 30% of arriving passengers get off. It then scales for how much busier the station is than usual, and for disruption or a long wait for the next train. TfL doesn’t publish platform queues or live train loads, so treat it as a rough guide.</li>
           <li><strong>*Platform outlook</strong> (shown when there’s no loading data for a line) is an estimate made by this dashboard, not a TfL figure: the station’s live level, raised a step for severe disruption, part of a step for minor delays, and a little when the next train is 8+ minutes away.</li>
         </ul>

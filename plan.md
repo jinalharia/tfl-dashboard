@@ -12,9 +12,9 @@ Live site: https://jinalharia.github.io/tfl-dashboard/. GitHub Pages deploys `ma
 | 4 | Lift faults and step-free access alerts | ✅ Done (PR #2) | — |
 | 3 | "Best time to travel" (quieter-time hint) | ✅ Done (PR #2) | — |
 | 1 | Passenger flow by time of day | ✅ Done (PR #2), changed from the proposal (see note) | — |
-| 5 | Station facilities panel | ⬜ To do | A |
-| 6 | Station-specific disruption notices | ⬜ To do | A |
-| 7 | Santander Cycles near the station | ⬜ To do | A |
+| 5 | Station facilities panel | ✅ Done (package A) | A |
+| 6 | Station-specific disruption notices | ✅ Done (package A) | A |
+| 7 | Santander Cycles near the station | ✅ Done (package A) | A |
 | 8 | Network-wide status strip | ⬜ To do | B |
 | 9 | Planned closures in the next 2 weeks | ⬜ To do | B |
 | 2 | Live crowding along a whole line | ⬜ To do | C |
@@ -30,6 +30,12 @@ Live site: https://jinalharia.github.io/tfl-dashboard/. GitHub Pages deploys `ma
 Packages A, B and C can run in parallel. Each one touches `js/app.js`, `index.html` and `css/styles.css`, so keep changes to **new** functions and **new** page sections, and merge `main` into your branch before opening a PR. Resolve conflicts by keeping both sides; each package adds its own section.
 
 ### Package A: station information (items 5, 6, 7)
+
+**Status: ✅ done.** A "Station information" section below the tiles has station notices, a facilities card and a Santander Cycles card. Notes from building it:
+- `getStation()` now also returns the raw stop as `station.stop`.
+- `/StopPoint/940GZZLUKSX` returns the `HUBKGX` hub. Its National Rail children (`910GKNGX`, `910GSTPXBOX`) have their own facility values, and they're shown as a separate "National Rail" group. Stratford's three children list identical values, so they're merged into one group, and the card says so.
+- `NearestPlaces` lists docks in **id order, not distance order**. To pick the nearest 5, one static `/Place?type=BikePoint&lat&lon&radius=800` request per station gives `places[].distance`. If it fails, docks show in listed order without distances.
+- Notices whose `toDate` has passed are hidden. Future ones are marked "Starts …".
 
 One "Station information" section below the tiles, loaded when a station is selected. Items 5 and 7 don't need refreshing; refresh item 6 with the live data every 60 s, or every 5 minutes if you add your own timer.
 

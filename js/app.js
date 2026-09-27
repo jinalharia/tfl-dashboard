@@ -36,6 +36,7 @@
     loadings: new Map(), // lineId → raw train-loading response (also carries passenger flows)
     lifts: null, // [{station, lifts, message}] for this station | Error | null
     boarding: new Map(), // lineId → [{dir, to, toName, origin, prevNames, ownRows, arriveRows}]
+    info: { notices: null, bikes: null, bikePlaces: null }, // station information section (package A)
     updatedAt: null,
     token: 0,
     timer: null,
@@ -162,6 +163,7 @@
     state.loadings.clear();
     state.lifts = null;
     state.boarding = new Map();
+    state.info = { notices: null, bikes: null, bikePlaces: null };
     showMessage('Loading station…', 'loading');
 
     const url = new URL(location.href);
@@ -183,7 +185,7 @@
     state.station = station;
     document.title = `${station.name} · Live station crowding`;
 
-    await Promise.all([loadProfiles(token), loadLive(token), loadTrainLoadings(token)]);
+    await Promise.all([loadProfiles(token), loadLive(token), loadTrainLoadings(token), loadStationInfo(token)]);
     if (token !== state.token) return;
     render();
     startTimer();
@@ -254,6 +256,38 @@
     state.boarding = out;
   }
 
+  // ---------------------------------------------------------------------------
+  // Station information: facilities, disruption notices, Santander Cycles nearby
+  // ---------------------------------------------------------------------------
+  const BIKE_RADIUS_M = 800;
+  const BIKE_LIMIT = 5;
+
+  /** Once per station: distances to nearby bike docks (static), then the live parts. */
+  async function loadStationInfo(token) {
+    const stop = state.station.stop;
+    const ids = T.nearbyBikePointIds(stop);
+    const places = ids.length && stop && Number.isFinite(stop.lat) && Number.isFinite(stop.lon)
+      ? await settle(state.client.getBikePointsNear(stop.lat, stop.lon, BIKE_RADIUS_M))
+      : null;
+    if (token !== state.token) return;
+    // Without distances the docks are still shown, in TfL's listed order.
+    state.info.bikePlaces = places instanceof Error ? null : places;
+    await loadStationInfoLive(token);
+  }
+
+  /** Refreshed with the live data: station disruption notices and bike availability. */
+  async function loadStationInfoLive(token) {
+    const s = state.station;
+    const ids = T.nearbyBikePointIds(s.stop);
+    const [notices, occupancy] = await Promise.all([
+      settle(state.client.getStationDisruptions(s.id)),
+      ids.length ? settle(state.client.getBikeOccupancy(ids)) : Promise.resolve([]),
+    ]);
+    if (token !== state.token) return;
+    state.info.notices = notices;
+    state.info.bikes = occupancy instanceof Error ? occupancy : T.nearestBikePoints(occupancy, state.info.bikePlaces, BIKE_LIMIT);
+  }
+
   async function loadLive(token) {
     const s = state.station;
     const [live, arrivals, statuses, lifts] = await Promise.all([
@@ -277,7 +311,7 @@
     const token = state.token;
     $('#content').classList.add('is-refreshing');
     try {
-      const tasks = [loadLive(token)];
+      const tasks = [loadLive(token), loadStationInfoLive(token)];
       if (T.londonNow().day !== state.profileDay) tasks.push(loadProfiles(token));
       await Promise.all(tasks);
       if (token === state.token) render();
@@ -362,6 +396,7 @@
 
     renderLifts();
     renderTiles();
+    renderStationInfo();
     renderChart();
     renderLines();
   }
@@ -388,6 +423,140 @@
         <strong>Step-free access affected${count ? ` — ${count} lift${count === 1 ? '' : 's'} out of service` : ''}</strong>
         ${lifts.map((l) => `<p>${esc(l.message)}</p>`).join('')}
       </div>`;
+  }
+
+  function renderStationInfo() {
+    const s = state.station;
+    const facilities = T.stationFacilities(s.stop);
+    renderNotices();
+    renderFacilities(facilities);
+    renderBikes();
+    $('#station-info').hidden = false;
+  }
+
+  const londonDate = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  });
+  function formatNoticeDate(iso) {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? '' : londonDate.format(d).replace(',', '');
+  }
+
+  function noticeClass(type) {
+    if (/clos|suspen/i.test(type || '')) return 'serious';
+    if (/information|message/i.test(type || '')) return 'info';
+    return 'warning';
+  }
+
+  const APPEARANCE_LABELS = { PlannedWork: 'Planned work', RealTime: 'Live incident' };
+  const NOTICE_MODE_LABELS = { ...T.MODE_LABELS, 'national-rail': 'National Rail' };
+
+  function renderNotices() {
+    const box = $('#station-notices');
+    const notices = state.info.notices;
+    if (notices instanceof Error) {
+      box.hidden = false;
+      box.className = 'card notices';
+      box.innerHTML = `<h3 class="card-title">Station notices</h3><p class="muted small">Station notices unavailable: ${esc(notices.message)}</p>`;
+      return;
+    }
+    // No notices: hide the card rather than show an empty list.
+    if (!notices || !notices.length) {
+      box.hidden = true;
+      box.textContent = '';
+      return;
+    }
+    box.hidden = false;
+    box.className = 'card notices';
+    const items = notices.map((n) => {
+      const cls = noticeClass(n.type);
+      const from = formatNoticeDate(n.fromDate);
+      const to = formatNoticeDate(n.toDate);
+      const when = n.upcoming
+        ? `<strong>Starts ${esc(from)}</strong>${to ? ` · until ${esc(to)}` : ''}`
+        : `<strong>In force now</strong>${to ? ` · until ${esc(to)}` : ''}${from ? ` <span class="muted">(since ${esc(from)})</span>` : ''}`;
+      const where = [
+        n.stations.map((st) => st.name).join(', '),
+        n.modes.map((m) => NOTICE_MODE_LABELS[m] || m).join(', '),
+      ].filter(Boolean).join(' · ');
+      return `
+        <li class="notice">
+          <div class="notice-top">
+            <span class="status status-${cls}"><span class="status-icon" aria-hidden="true">${STATUS_ICONS[cls]}</span>${esc(n.type || 'Notice')}</span>
+            ${n.appearance ? `<span class="notice-kind">${esc(APPEARANCE_LABELS[n.appearance] || n.appearance)}</span>` : ''}
+          </div>
+          <div class="small notice-when">${when}</div>
+          <p class="notice-text">${esc(n.description)}</p>
+          ${where ? `<div class="small muted">${esc(where)}</div>` : ''}
+          ${n.additionalInformation ? `<details class="notice-more"><summary>More information</summary><p>${esc(n.additionalInformation)}</p></details>` : ''}
+        </li>`;
+    }).join('');
+    box.innerHTML = `
+      <h3 class="card-title">Station notices <span class="muted small">(${notices.length})</span></h3>
+      <ul class="notice-list">${items}</ul>`;
+  }
+
+  const FACILITY_ICONS = { yes: '✓', no: '✕' };
+
+  function renderFacilities(groups) {
+    const box = $('#facilities');
+    if (!groups.length) {
+      box.innerHTML = '<h3 class="card-title">Facilities</h3><p class="muted small">TfL doesn’t list facilities for this station.</p>';
+      return;
+    }
+    const html = groups.map((g) => {
+      const items = g.items.map((i) => `
+        <div class="fac-item fac-${esc(i.kind)}">
+          <dt>${esc(i.label)}</dt>
+          <dd>${FACILITY_ICONS[i.kind] ? `<span class="fac-icon" aria-hidden="true">${FACILITY_ICONS[i.kind]}</span>` : ''}${esc(i.value)}</dd>
+        </div>`).join('');
+      const extras = [
+        g.visitorCentre ? `<div class="small">Visitor centre: ${esc(g.visitorCentre)}</div>` : '',
+        g.phone ? `<div class="small muted">Phone: ${esc(g.phone)}</div>` : '',
+      ].join('');
+      const same = g.ids.length > 1 ? ' · TfL lists the same figures for each' : '';
+      return `
+        <div class="fac-group">
+          <h4 class="fac-title">${esc(g.label)}</h4>
+          <div class="small muted">${esc(g.names.join(', '))}${esc(same)}</div>
+          ${items ? `<dl class="fac-list">${items}</dl>` : ''}
+          ${extras}
+        </div>`;
+    }).join('');
+    box.innerHTML = `<h3 class="card-title">Facilities</h3>${html}`;
+  }
+
+  function renderBikes() {
+    const box = $('#bikes');
+    const bikes = state.info.bikes;
+    const title = '<h3 class="card-title">Santander Cycles nearby</h3>';
+    if (bikes instanceof Error) {
+      box.innerHTML = `${title}<p class="muted small">Bike availability unavailable: ${esc(bikes.message)}</p>`;
+      return;
+    }
+    if (!bikes || !bikes.length) {
+      box.innerHTML = `${title}<p class="muted small">TfL doesn’t list any Santander Cycles docks near this station.</p>`;
+      return;
+    }
+    const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+    const rows = bikes.map((b) => {
+      const bikesText = b.bikes === null ? 'Bikes unknown'
+        : b.bikes === 0 ? 'No bikes'
+        : `${plural(b.bikes, 'bike', 'bikes')}${b.eBikes ? ` <span class="muted">(${plural(b.eBikes, 'e-bike', 'e-bikes')})</span>` : ''}`;
+      const docksText = b.emptyDocks === null ? '' : b.emptyDocks === 0 ? 'No free docks' : plural(b.emptyDocks, 'free dock', 'free docks');
+      return `
+        <li class="bike">
+          <div class="bike-top"><span class="bike-name">${esc(b.name)}</span>${b.distance !== null ? `<span class="bike-dist">${esc(b.distance)} m</span>` : ''}</div>
+          <div class="bike-counts small">
+            <span class="${b.bikes === 0 ? 'bike-none' : ''}">${b.bikes === 0 ? '<span aria-hidden="true">✕ </span>' : ''}${bikesText}</span>
+            ${docksText ? `<span class="${b.emptyDocks === 0 ? 'bike-none' : ''}">${b.emptyDocks === 0 ? '<span aria-hidden="true">✕ </span>' : ''}${esc(docksText)}</span>` : ''}
+          </div>
+        </li>`;
+    }).join('');
+    const ranked = bikes.some((b) => b.distance !== null);
+    box.innerHTML = `${title}
+      <p class="muted small">${ranked ? 'Nearest docks, straight-line distance' : 'Docks TfL lists near this station'}. Live availability.</p>
+      <ul class="bike-list">${rows}</ul>`;
   }
 
   function hintHtml(naptan, liveValue) {

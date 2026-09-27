@@ -323,3 +323,41 @@ dialog input { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid 
 .board-tight .board-icon { background: var(--warning); color: #0b0b0b; }
 .board-wait1 .board-icon { background: var(--serious); color: #0b0b0b; }
 .board-wait2 .board-icon { background: var(--critical); }
+
+/* ---------- Station information (facilities, notices, Santander Cycles) ---------- */
+.info-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; margin-top: 12px; }
+.info-card { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.info-card .card-title, .notices .card-title { margin-bottom: 0; }
+.info-card > p { margin: 0; }
+.notices { margin-top: 12px; }
+.notice-list, .bike-list { list-style: none; margin: 0; padding: 0; }
+.notice { display: flex; flex-direction: column; gap: 4px; padding: 12px 0; border-top: 1px solid var(--gridline); }
+.notice:last-child { padding-bottom: 0; }
+.notice-list .notice:first-child { margin-top: 8px; }
+.notice-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.notice-kind { font-size: 12px; color: var(--text-secondary); }
+.notice-text { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.notice-more summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); }
+.notice-more p { margin: 6px 0 0; font-size: 13px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.fac-group { display: flex; flex-direction: column; gap: 4px; padding-top: 10px; border-top: 1px solid var(--gridline); }
+.fac-group:first-of-type { padding-top: 0; border-top: 0; }
+.fac-title { font-size: 14px; margin: 0; }
+.fac-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px 14px; margin: 6px 0 2px; }
+.fac-item { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 2px 0; border-bottom: 1px solid var(--gridline); min-width: 0; }
+.fac-item dt { color: var(--text-secondary); white-space: nowrap; }
+.fac-item dd { margin: 0; font-weight: 600; text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.fac-text, .fac-none { grid-column: 1 / -1; }
+.fac-none dd { font-weight: 400; color: var(--text-secondary); }
+.fac-icon { margin-right: 4px; }
+.fac-yes .fac-icon { color: var(--good-text); }
+.fac-no .fac-icon { color: var(--bad-text); }
+.bike { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-top: 1px solid var(--gridline); }
+.bike:first-child { border-top: 0; padding-top: 0; }
+.bike-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.bike-name { font-size: 14px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.bike-dist { font-size: 12px; color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bike-counts { display: flex; flex-wrap: wrap; gap: 4px 14px; font-variant-numeric: tabular-nums; }
+.bike-none { color: var(--bad-text); }
+@media (max-width: 640px) {
+  .info-grid { grid-template-columns: 1fr; }
+}
