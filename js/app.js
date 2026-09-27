@@ -8,7 +8,7 @@
   const SERIES_VARS = ['--series-1', '--series-2', '--series-3'];
 
   const QUICK_PICKS = DEMO
-    ? [['940GZZLUKSX', "King's Cross"], ['940GZZLUOXC', 'Oxford Circus'], ['940GZZLUSTD', 'Stratford'], ['940GZZLUBNK', 'Bank']]
+    ? [['940GZZLUKSX', "King's Cross"], ['940GZZLUOXC', 'Oxford Circus'], ['940GZZLUSTD', 'Stratford'], ['940GZZLUBNK', 'Bank'], ['940GZZLUWLO', 'Waterloo']]
     : [
         ['940GZZLUKSX', "King's Cross"], ['940GZZLUOXC', 'Oxford Circus'], ['940GZZLUSTD', 'Stratford'],
         ['940GZZLUBNK', 'Bank'], ['940GZZLUWLO', 'Waterloo'], ['940GZZLULNB', 'London Bridge'],
@@ -35,6 +35,7 @@
     statusError: null,
     loadings: new Map(), // lineId → raw train-loading response (also carries passenger flows)
     lifts: null, // [{station, lifts, message}] for this station | Error | null
+    boarding: new Map(), // lineId → [{dir, to, toName, origin, prevNames, ownRows, arriveRows}]
     updatedAt: null,
     token: 0,
     timer: null,
@@ -160,6 +161,7 @@
     state.statuses = new Map();
     state.loadings.clear();
     state.lifts = null;
+    state.boarding = new Map();
     showMessage('Loading station…', 'loading');
 
     const url = new URL(location.href);
@@ -204,6 +206,52 @@
     );
     if (token !== state.token) return;
     state.loadings = new Map(entries.filter(([, v]) => !(v instanceof Error)));
+    await loadBoardingInputs(token, tubeLines);
+  }
+
+  // Route sequences and other stations' train loadings are static, so cache them for the session.
+  const staticCache = new Map();
+  function cached(key, fn) {
+    if (!staticCache.has(key)) staticCache.set(key, settle(fn()));
+    return staticCache.get(key);
+  }
+
+  /**
+   * For each line and direction: this station's own loading rows, plus the previous station's
+   * rows towards here (from the route sequence), so the boarding estimate can see how full
+   * trains arrive. At a terminus in that direction the train starts here and arrives empty.
+   */
+  async function loadBoardingInputs(token, lines) {
+    const out = new Map();
+    await Promise.all(lines.map(async (line) => {
+      const raw = state.loadings.get(line.id);
+      if (!raw) return;
+      const own = T.loadingRows(raw, line);
+      if (!own.length) return;
+      const route = await cached(`route:${line.id}`, () => state.client.getRouteSequence(line.id));
+      if (route instanceof Error) return;
+      const names = T.routeStationNames(route);
+      const station = String(line.naptan).toUpperCase();
+      const dirs = [...new Map(own.map((r) => [`${r.dir}|${r.to}`, r])).values()];
+      const result = await Promise.all(dirs.map(async ({ dir, to }) => {
+        const p = T.previousStations(route, station, to);
+        const arriveRows = [];
+        const prevNames = [];
+        for (const prev of p.prev) {
+          const prevRaw = await cached(`load:${prev}:${line.id}`, () => state.client.getTrainLoadings(prev, line.id));
+          if (prevRaw instanceof Error) continue;
+          const rows = T.loadingRows(prevRaw, line).filter((r) => r.to === station);
+          if (rows.length) { arriveRows.push(rows); prevNames.push(names.get(prev) || prev); }
+        }
+        return {
+          dir, to, toName: names.get(to) || to, origin: p.origin, prevNames,
+          ownRows: own.filter((r) => r.dir === dir && r.to === to), arriveRows,
+        };
+      }));
+      out.set(line.id, result.sort((a, b) => a.dir.localeCompare(b.dir)));
+    }));
+    if (token !== state.token) return;
+    state.boarding = out;
   }
 
   async function loadLive(token) {
@@ -477,6 +525,51 @@
     return { value, reasons };
   }
 
+  const BOARD_ICONS = { board: '✓', tight: '~', wait1: '!', wait2: '!!' };
+
+  /** Per-direction boarding estimate for a line card, or null when there's no loading data. */
+  function boardingHtml(line, status, platforms, arrivalsRaw, minutes) {
+    const dirs = state.boarding.get(line.id);
+    if (!dirs || !dirs.length) return null;
+    const label = '<div class="section-label" title="Estimate made by this dashboard from TfL typical train loadings and live busyness">Boarding estimate<sup>*</sup></div>';
+    const running = Array.isArray(arrivalsRaw) && arrivalsRaw.some((a) => a.lineId === line.id);
+    if (!running && status && (status.cls === 'critical' || status.cls === 'info') && /clos|suspend|not running/i.test(status.description)) {
+      return `<div class="boarding">${label}<p class="small muted">No trains running right now, so there’s nothing to estimate.</p></div>`;
+    }
+    const live = liveFor(line.naptan);
+    const typical = typicalNow(line.naptan);
+    const liveFactor = live !== null && typical !== null && typical >= 0.05 ? live / typical : 1;
+    const rows = dirs.map((d) => {
+      const dirName = T.DIRECTION_NAMES[d.dir] || d.dir;
+      const depart = T.loadingAt(d.ownRows, minutes);
+      let arrive = null;
+      for (const rows of d.arriveRows) {
+        const v = T.loadingAt(rows, minutes);
+        if (v !== null) arrive = Math.max(arrive === null ? 0 : arrive, v);
+      }
+      const reasons = [];
+      let serviceFactor = 1;
+      if (status && (status.cls === 'serious' || status.cls === 'critical')) { serviceFactor *= 1.5; reasons.push('disruption on the line'); }
+      else if (status && status.cls === 'warning') { serviceFactor *= 1.2; reasons.push('minor delays'); }
+      const platform = platforms.find((p) => p.platform.toLowerCase().startsWith(dirName.toLowerCase()));
+      if (platform && platform.trains[0] && platform.trains[0].minutes >= 8) { serviceFactor *= 1.2; reasons.push(`next train in ${platform.trains[0].minutes} min`); }
+      const e = T.boardingEstimate({ depart, arrive, origin: d.origin, liveFactor, serviceFactor });
+      const head = `<div class="board-dir">${esc(dirName)} <span class="muted">to ${esc(d.toName)}</span></div>`;
+      if (!e) return `<div class="board-row">${head}<div class="small muted">No typical loading data for this time.</div></div>`;
+      const pts = Math.round((liveFactor - 1) * 100);
+      if (Math.abs(pts) >= 5 && live !== null) reasons.unshift(`station ${Math.abs(pts)}% ${pts > 0 ? 'busier' : 'quieter'} than usual`);
+      const arriveText = d.origin
+        ? 'Starts here, so trains arrive empty'
+        : e.arriveKnown ? `Arrives about ${e.arrivePct}% full from ${esc(d.prevNames.join(' / '))}` : 'Arrival load unknown';
+      return `
+        <div class="board-row">
+          <div class="board-top">${head}<span class="board-badge board-${e.band.key}"><span class="board-icon" aria-hidden="true">${BOARD_ICONS[e.band.key]}</span>${esc(e.band.label)}</span></div>
+          <div class="small muted">${arriveText} · usually leaves ${e.saturated ? 'full' : `${e.departPct}% full`}${reasons.length ? ` · ${esc(reasons.join(', '))}` : ''}</div>
+        </div>`;
+    }).join('');
+    return `<div class="boarding">${label}${rows}</div>`;
+  }
+
   function renderLines() {
     const s = state.station;
     const minutes = T.londonNow().minutes;
@@ -488,7 +581,9 @@
       const arrivalsRaw = state.arrivals.get(line.naptan);
       const platforms = Array.isArray(arrivalsRaw) ? T.summarizeArrivals(arrivalsRaw, line.id, 3) : [];
       const loadings = state.loadings.has(line.id) ? T.summarizeTrainLoadings(state.loadings.get(line.id), line, minutes) : [];
-      const outlook = platformOutlook(stationValue, status, platforms);
+      const boarding = boardingHtml(line, status, platforms, arrivalsRaw, minutes);
+      // The boarding estimate supersedes the station-level outlook and the relative loading bars.
+      const outlook = boarding ? null : platformOutlook(stationValue, status, platforms);
 
       const statusHtml = status
         ? `<span class="status status-${status.cls}"><span class="status-icon" aria-hidden="true">${STATUS_ICONS[status.cls]}</span>${esc(status.description)}</span>`
@@ -528,7 +623,7 @@
           </div>`;
       }
 
-      const loadingHtml = loadings.length
+      const loadingHtml = !boarding && loadings.length
         ? `<div class="loadings"><div class="section-label">Typical train loading now</div>${loadings.map((l) => `
             <div class="loading-row"><span class="loading-dir">${esc(l.direction)}</span>
               <span class="loading-bar"><span style="width:${(l.relative * 100).toFixed(0)}%"></span></span>
@@ -554,6 +649,7 @@
           </header>
           ${reasons}
           <div class="crowd">${crowdHtml}${outlookHtml}</div>
+          ${boarding || ''}
           ${loadingHtml}
           ${flowHtml}
           <div class="arrivals"><div class="section-label">Next trains</div>${arrivalsHtml}</div>

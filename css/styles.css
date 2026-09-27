@@ -310,3 +310,16 @@ dialog input { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid 
 /* The Northern line is black; give its chart ink a readable step on dark surfaces. */
 :root[data-theme="dark"] .line-card[data-line="northern"] { --line-ink: #b8b8b8; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .line-card[data-line="northern"] { --line-ink: #b8b8b8; } }
+
+/* ---------- Boarding estimate ---------- */
+.boarding { display: flex; flex-direction: column; gap: 8px; }
+.board-row { display: flex; flex-direction: column; gap: 2px; }
+.board-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.board-dir { font-size: 13px; font-weight: 600; }
+.board-dir .muted { font-weight: 400; }
+.board-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; }
+.board-icon { display: inline-grid; place-items: center; min-width: 16px; height: 16px; padding: 0 3px; border-radius: 8px; font-size: 10px; color: #fff; }
+.board-board .board-icon { background: var(--good); }
+.board-tight .board-icon { background: var(--warning); color: #0b0b0b; }
+.board-wait1 .board-icon { background: var(--serious); color: #0b0b0b; }
+.board-wait2 .board-icon { background: var(--critical); }

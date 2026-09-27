@@ -193,3 +193,98 @@ test('liftDisruptionsFor matches hub codes and station NaPTANs', () => {
   assert.deepEqual(T.liftDisruptionsFor(raw, ['940GZZLUOXC']), []);
   assert.deepEqual(T.liftDisruptionsFor({ message: 'error' }, ['HUBIMP']), []);
 });
+
+// ---------------------------------------------------------------------------
+// Boarding estimate
+// ---------------------------------------------------------------------------
+
+// Shape of /Line/waterloo-city/Route/Sequence/all (trimmed): two stations, one route each way.
+const WC_ROUTE = {
+  orderedLineRoutes: [
+    { name: 'Bank  &harr;  Waterloo ', naptanIds: ['940GZZLUBNK', '940GZZLUWLO'] },
+    { name: 'Waterloo  &harr;  Bank ', naptanIds: ['940GZZLUWLO', '940GZZLUBNK'] },
+  ],
+  stopPointSequences: [{ stopPoint: [
+    { id: '940GZZLUBNK', stationId: '940GZZLUBNK', name: 'Bank Underground Station' },
+    { id: '940GZZLUWLO', stationId: '940GZZLUWLO', name: 'Waterloo Underground Station' },
+  ] }],
+  stations: [{ id: 'HUBBAN', name: 'Bank' }, { id: 'HUBWAT', name: 'Waterloo' }],
+};
+
+// Shape of /StopPoint/940GZZLUBNK/Crowding/waterloo-city (trimmed): Bank → Waterloo is full at 17:45.
+const WC_BANK = { lines: [{ id: 'waterloo-city', name: 'Waterloo & City', crowding: { trainLoadings: [
+  { line: 'Waterloo & City', lineDirection: 'WB', platformDirection: 'WB', direction: 'Inbound', naptanTo: '940GZZLUWLO', timeSlice: '0815-0830', value: 1 },
+  { line: 'Waterloo & City', lineDirection: 'WB', platformDirection: 'WB', direction: 'Inbound', naptanTo: '940GZZLUWLO', timeSlice: '1745-1800', value: 6 },
+] } }] };
+
+test('previousStations: Waterloo & City starts at Waterloo eastbound, so trains arrive empty', () => {
+  // Boarding at Waterloo towards Bank: nothing precedes Waterloo in that direction.
+  assert.deepEqual(T.previousStations(WC_ROUTE, '940GZZLUWLO', '940GZZLUBNK'), { matched: true, origin: true, prev: [] });
+  // Same at Bank towards Waterloo.
+  assert.deepEqual(T.previousStations(WC_ROUTE, '940GZZLUBNK', '940GZZLUWLO'), { matched: true, origin: true, prev: [] });
+  // The Bank → Waterloo row is full at 17:45, but it's the westbound train everyone leaves at Waterloo;
+  // it must not count as the arriving load for eastbound boarders.
+  const rows = T.loadingRows(WC_BANK, { id: 'waterloo-city', name: 'Waterloo & City' });
+  assert.equal(T.loadingAt(rows.filter((r) => r.to === '940GZZLUWLO'), 17 * 60 + 50), 6);
+});
+
+test('previousStations finds the station before on a through route', () => {
+  const route = { orderedLineRoutes: [
+    { naptanIds: ['940GZZLUBXN', '940GZZLUGPK', '940GZZLUOXC', '940GZZLUWRR'] },
+    { naptanIds: ['940GZZLUWRR', '940GZZLUOXC', '940GZZLUGPK', '940GZZLUBXN'] },
+  ] };
+  assert.deepEqual(T.previousStations(route, '940GZZLUOXC', '940GZZLUWRR'), { matched: true, origin: false, prev: ['940GZZLUGPK'] });
+  assert.deepEqual(T.previousStations(route, '940GZZLUOXC', '940GZZLUGPK'), { matched: true, origin: false, prev: ['940GZZLUWRR'] });
+  assert.equal(T.previousStations(route, '940GZZLUOXC', '940GZZLUXXX').matched, false);
+});
+
+test('routeStationNames reads NaPTAN names from stopPointSequences, not hub ids', () => {
+  const names = T.routeStationNames(WC_ROUTE);
+  assert.equal(names.get('940GZZLUWLO'), 'Waterloo');
+  assert.equal(names.get('940GZZLUBNK'), 'Bank');
+});
+
+test('loadingRows and loadingAt pick the slice for a direction', () => {
+  const rows = T.loadingRows(WC_BANK, { id: 'waterloo-city', name: 'Waterloo & City' });
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows[0], { dir: 'WB', to: '940GZZLUWLO', start: 8 * 60 + 15, value: 1 });
+  assert.equal(T.loadingAt(rows, 8 * 60 + 20), 1);
+  assert.equal(T.loadingAt(rows, 12 * 60), null);
+});
+
+test('boardingEstimate: empty arriving train at Waterloo boards first time at a normal 08:15', () => {
+  // Real W&C Waterloo eastbound at 08:15: leaves 4/6 full, starts at Waterloo.
+  const e = T.boardingEstimate({ depart: 4, arrive: null, origin: true, liveFactor: 1, serviceFactor: 1 });
+  assert.equal(e.band.key, 'board');
+  assert.equal(e.roomPct, 100);
+  assert.equal(e.arrivePct, 0);
+  assert.equal(e.trainsToLetGo, 0);
+  // 50% busier than usual: now tight.
+  assert.equal(T.boardingEstimate({ depart: 4, origin: true, liveFactor: 1.5 }).band.key, 'tight');
+});
+
+test('boardingEstimate: full departures plus a busier station means letting trains go', () => {
+  // Real W&C Bank westbound at 17:45 leaves 6/6 (full).
+  const normal = T.boardingEstimate({ depart: 6, origin: true, liveFactor: 1, serviceFactor: 1 });
+  assert.equal(normal.saturated, true);
+  assert.equal(normal.band.key, 'tight');
+  const busy = T.boardingEstimate({ depart: 6, origin: true, liveFactor: 1.3, serviceFactor: 1 });
+  assert.equal(busy.band.key, 'wait1');
+  assert.equal(busy.trainsToLetGo, 1);
+  const disrupted = T.boardingEstimate({ depart: 6, origin: true, liveFactor: 1.4, serviceFactor: 1.5 });
+  assert.equal(disrupted.band.key, 'wait2');
+  assert.equal(disrupted.trainsToLetGo, 2);
+});
+
+test('boardingEstimate: trains arriving full leave little room at a through station', () => {
+  // Real Central westbound at Liverpool Street 08:15: arrives 6/6 from Bethnal Green, leaves 6/6.
+  const e = T.boardingEstimate({ depart: 6, arrive: 6, origin: false, liveFactor: 1, serviceFactor: 1 });
+  assert.equal(e.roomPct, 30);
+  assert.equal(e.band.key, 'tight');
+  // Real Victoria northbound at Oxford Circus 08:15: arrives 4, leaves 2 — still some boarders.
+  const v = T.boardingEstimate({ depart: 2, arrive: 4, origin: false, liveFactor: 1, serviceFactor: 1 });
+  assert.equal(v.band.key, 'board');
+  assert.ok(v.ratio > 0);
+  // No typical data for this slice: no estimate.
+  assert.equal(T.boardingEstimate({ depart: null, origin: true }), null);
+});

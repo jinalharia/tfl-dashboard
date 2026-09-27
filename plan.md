@@ -19,6 +19,7 @@ Live site: https://jinalharia.github.io/tfl-dashboard/. GitHub Pages deploys `ma
 | 9 | Planned closures in the next 2 weeks | ⬜ To do | B |
 | 2 | Live crowding along a whole line | ⬜ To do | C |
 | — | Deploy only when tests pass (GitHub Actions) | ⬜ Optional | D |
+| — | Boarding estimate: trains you may need to let go before boarding | ✅ Done (package E) | E |
 
 **Note on #1.** The proposal was "entry/exit footfall", but TfL's `passengerFlows` are about 10 *unlabelled* values per 15-minute slice, so they can't be split into entries and exits. What shipped is **typical passenger flow per line**: the per-slice sum, charted on each line card. TfL gives one profile for all days and it follows a weekday pattern, so the card says so at weekends.
 
@@ -76,6 +77,37 @@ One "Station information" section below the tiles, loaded when a station is sele
 ### Package D (optional): tested deploys
 
 Add `.github/workflows/pages.yml`: on push to `main`, run `npm test`, then `actions/upload-pages-artifact` and `actions/deploy-pages`. The repo owner then has to switch **Settings → Pages → Source** to *GitHub Actions*. Coordinate that with the owner before merging, or the site will stop updating.
+
+### Package E: boarding estimate ✅ done
+
+**Question:** how many trains might you have to let go before you can board, given how crowded the station is?
+
+**Built:** a per-direction "Boarding estimate*" on each Underground line card. Where it's available, it replaces the older platform outlook and the relative loading bars.
+
+**Data (all checked against the live API on 2026-09-27):**
+- **Loading scores:** `/StopPoint/{naptan}/Crowding/{line}?direction=all` → `lines[].crowding.trainLoadings[]` with `lineDirection` (NB/SB/EB/WB), `naptanTo` (next station), `timeSlice` and `value`. Scores run **0–6**; 6 was seen on Bank → Waterloo at 17:45. Each station's rows are the load **leaving** it towards `naptanTo`.
+- **Route order:** `/Line/{id}/Route/Sequence/all` → `orderedLineRoutes[].naptanIds`, one list per direction and branch. For names, use `stopPointSequences[].stopPoint[]`; `stations[]` uses hub ids (`HUBBAN`) at interchanges.
+- **Arriving load:** the row of the station *before this one in the direction of travel*, whose `naptanTo` is this station. When this station is first in the route, the train arrives empty. Example: the Waterloo & City line at Waterloo eastbound and at Bank westbound. Note that the Bank → Waterloo row is full at 17:45, but it belongs to the westbound train that empties at Waterloo, so it must not be used for eastbound boarders.
+
+**Model** (`boardingEstimate()` in `js/tfl-api.js`):
+- `d` = departing score ÷ 6, `a` = arriving score ÷ 6 (0 when the train starts here).
+- Boarders = max(d − a×0.7, 0.3×d), assuming 30% alight. Room = 1 − (d − boarders).
+- Ratio = boarders × (live ÷ typical busyness) × service factor ÷ room, with ×1.5 for severe disruption, ×1.2 for minor delays, and ×1.2 if the next train is 8+ minutes away.
+- If d is full (score 6), the ratio is at least the busyness and service factors.
+- Bands: < 0.85 board the first train, ≤ 1 tight, ≤ 2 let 1 go, > 2 let 2+ go.
+- When the line isn't running (closure status and no arrivals), the card says so instead of estimating.
+
+**Results on real data** (weekday profile):
+- Waterloo & City at Waterloo, 08:15 eastbound: arrives empty and leaves 4/6 full, so "Board the first train". It becomes "tight" if Waterloo is 50% busier than usual.
+- Waterloo & City at Bank, 17:45 westbound: leaves full, so "tight", or "let 1 train go" when Bank is 30% busier than usual.
+- Central at Liverpool Street, 08:15 westbound: arrives full from Bethnal Green, leaving 30% room, so "tight".
+
+**Caching:** route sequences and other stations' loadings are static, so `loadBoardingInputs()` in `js/app.js` caches them for the session. That's about 1 + (number of previous stations) extra requests per line, the first time a line is seen.
+
+**Possible follow-ups (not started):**
+- Calibrate the 30% alighting assumption per station using `passengerFlows`, once its values can be identified.
+- Use live gaps between predicted trains, instead of only the first train's wait, for the service factor.
+- On branching lines, weight previous stations by frequency instead of taking the fullest.
 
 ## Conventions for every package
 
