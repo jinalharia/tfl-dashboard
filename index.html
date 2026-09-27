@@ -6,6 +6,13 @@
   <title>Live station crowding</title>
   <meta name="description" content="Live crowding for every Underground, Elizabeth line, DLR, Overground and Tram line at a London station, from the TfL API.">
   <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="css/swr.css">
+  <link rel="stylesheet" href="css/swr-departures.css">
+  <link rel="stylesheet" href="css/swr-calling-points.css">
+  <link rel="stylesheet" href="css/swr-status.css">
+  <link rel="stylesheet" href="css/swr-seats.css">
+  <link rel="stylesheet" href="css/swr-closures.css">
+  <link rel="stylesheet" href="css/swr-performance.css">
 </head>
 <body>
   <header class="topbar">
@@ -22,12 +29,24 @@
              aria-autocomplete="list" aria-controls="search-results" aria-expanded="false" spellcheck="false">
       <ul id="search-results" class="results" role="listbox" hidden></ul>
     </form>
+    <form id="swr-search-form" class="search" role="search" autocomplete="off" hidden>
+      <label for="swr-search" class="visually-hidden">Search for a South Western Railway station</label>
+      <input id="swr-search" type="search" placeholder="Search SWR stations, e.g. Surbiton or SUR" role="combobox"
+             aria-autocomplete="list" aria-controls="swr-search-results" aria-expanded="false" spellcheck="false">
+      <ul id="swr-search-results" class="results" role="listbox" hidden></ul>
+    </form>
     <div class="actions">
       <button id="theme-toggle" type="button" class="ghost">Theme: Auto</button>
       <button id="settings-open" type="button" class="ghost">Settings</button>
     </div>
   </header>
 
+  <div id="tabs" class="tabs" role="tablist" aria-label="Data source">
+    <button type="button" role="tab" id="tab-btn-tfl" class="tab" data-tab="tfl" aria-controls="tab-tfl" aria-selected="true">TfL</button>
+    <button type="button" role="tab" id="tab-btn-swr" class="tab" data-tab="swr" aria-controls="tab-swr" aria-selected="false" tabindex="-1" title="South Western Railway">SWR</button>
+  </div>
+
+  <div id="tab-tfl" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-tfl">
   <section id="network-status" class="network-status" aria-labelledby="network-title">
     <div class="network-head">
       <h2 id="network-title" class="network-title">Network status</h2>
@@ -49,6 +68,7 @@
         <div>
           <h2 id="station-name"></h2>
           <p id="station-meta" class="muted"></p>
+          <p id="station-swr" class="small" hidden><button id="station-swr-open" type="button" class="link">SWR trains from here</button></p>
         </div>
         <div class="refresh">
           <span id="updated" class="muted small"></span>
@@ -123,6 +143,46 @@
       </section>
     </div>
   </main>
+  </div>
+
+  <div id="tab-swr" class="tab-panel swr" role="tabpanel" aria-labelledby="tab-btn-swr" hidden>
+    <nav id="swr-quick-picks" class="quick-picks" aria-label="Popular South Western Railway stations"></nav>
+
+    <div id="swr-main" class="swr-main">
+      <section id="swr-status" class="swr-section" aria-label="South Western Railway service status" hidden></section>
+
+      <div id="swr-message" class="message" role="status"></div>
+
+      <section id="swr-station-head" class="swr-station-head" aria-labelledby="swr-station-name" hidden>
+        <p id="swr-demo-banner" class="demo-banner" hidden>Demo mode — synthetic data shaped like the SWR and National Rail responses. Remove <code>?demo</code> from the URL for live data.</p>
+        <div class="station-head">
+          <div>
+            <h2 id="swr-station-name"></h2>
+            <p id="swr-station-meta" class="muted swr-station-meta"></p>
+          </div>
+          <div class="refresh">
+            <span id="swr-updated" class="muted small" role="status"></span>
+            <label class="toggle"><input id="swr-auto-refresh" type="checkbox" checked> Auto-refresh (60 s)</label>
+            <button id="swr-refresh-now" type="button" class="ghost">Refresh now</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="swr-departures" class="swr-section" hidden></section>
+      <section id="swr-seats" class="swr-section" hidden></section>
+      <section id="swr-closures" class="swr-section" hidden></section>
+      <section id="swr-performance" class="swr-section" hidden></section>
+
+      <details class="about card swr-about">
+        <summary class="card-title">About the SWR tab</summary>
+        <ul>
+          <li>Each section says where its data comes from in its own “About this data”. Most of it is from South Western Railway’s live train information and from National Rail’s live departures via Huxley2, a community-run wrapper. Neither is an official, documented API, so either may stop working without notice.</li>
+          <li><strong>Station list</strong> — SWR’s own list of its stations (<code>/api/swrstations</code> on southwesternrailway.com), matched to TfL’s stops on the South Western Railway line by location and name, so stations TfL also covers (Waterloo, Vauxhall, Clapham Junction, Wimbledon, Richmond) can open in the TfL tab. The Isle of Wight’s Island Line stations have no TfL stop.</li>
+          <li>Nothing on this tab is requested until you open it, and it refreshes every 60 seconds only while it’s showing. The TfL tab pauses its own refresh while this tab is showing.</li>
+        </ul>
+      </details>
+    </div>
+  </div>
 
   <dialog id="settings">
     <form id="settings-form" method="dialog">
@@ -141,5 +201,14 @@
   <script src="js/demo-data.js"></script>
   <script src="js/chart.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/swr-stations.js"></script>
+  <script src="js/swr-api.js"></script>
+  <script src="js/swr-app.js"></script>
+  <script src="js/swr-departures.js"></script>
+  <script src="js/swr-calling-points.js"></script>
+  <script src="js/swr-status.js"></script>
+  <script src="js/swr-seats.js"></script>
+  <script src="js/swr-closures.js"></script>
+  <script src="js/swr-performance.js"></script>
 </body>
 </html>

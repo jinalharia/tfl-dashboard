@@ -25,7 +25,7 @@ Live site: https://jinalharia.github.io/tfl-dashboard/. Until the repo owner swi
 
 | # | Addition | Status | Package |
 |---|---|---|---|
-| SWR-9 | Tab bar (TfL / SWR), SWR station picker, shared SWR client | ⬜ Not started | S0 |
+| SWR-9 | Tab bar (TfL / SWR), SWR station picker, shared SWR client | ✅ Done | S0 |
 | SWR-3 | Live SWR departures board | ⬜ Not started | S1 |
 | SWR-1 | Train length on each departure, short-train warning | ⬜ Not started | S1 |
 | SWR-7 | Delay and cancellation reasons on each departure | ⬜ Not started | S1 |
@@ -231,6 +231,21 @@ S0 builds exactly these names, so the other packages can code against them befor
 - **Event for S2:** S1 renders each departure with a `button.swr-dep-more[data-service-id]` and an empty `div.swr-dep-detail[data-service-id]`. When a row is opened, S1 dispatches `document.dispatchEvent(new CustomEvent('swr:service-open', {detail: {serviceId, crs, container}}))`. After each re-render, S1 re-dispatches it for rows that are still open, so a refresh doesn't close them.
 
 ### Package S0: tab shell, SWR station picker and shared client (item SWR-9)
+
+**Status: ✅ done.** Notes from building it (checked on 2026-09-27 in headless Chromium, in `?demo` and against the live APIs through `page.route` + `curl`):
+- **Additions to the contract** (all optional or extra; nothing in it was renamed):
+  - Modules may also have `init(ctx)`, called once when the SWR tab is first opened, before any `onStation`. S3 can use it to show the TfL headline before a station is chosen. `onStation` and `refresh` always get a station, never `null`.
+  - `ctx.isStale()` is true once the station has changed since that `ctx` was made (the same test as comparing `ctx.token` with `SwrApp.token()`).
+  - Return a promise from `onStation`/`refresh`: the header's "Updated …" time is set when every module's promise has settled. A module that throws is logged with `console.error` and doesn't stop the others.
+  - `SwrApp` also has `open(crs)`, `selectTab('tfl'|'swr')`, `refresh()`, `station()`, `token()` and `tab()`. Switching tabs dispatches `dashboard:tabchange` (`detail.tab`) on `document`.
+  - `SwrApi` also has `renderParagraphs(paragraphs)` (a `DocumentFragment` of `<p>` and safe `<a>`), `safeHref(url)`, `searchStations(q)`, `stations()`, `swrStationForTflStop(stop)`, `normalizeCrs()`, `tabState(search, storedTab)`, `tabSearch(search, changes)`, `createDemoFetch(fallback)`, `configure({fetch, demo})`, `clearCache()` and `isDemo()`.
+- **`htmlToText(html)`** returns `[{text, parts, links}]`, one entry per paragraph. `text` is the plain text, with `\n` for a single `<br>`. `parts` is `[{text}, {text, href}, …]` in order, for building DOM. `links` is `[{text, href}]`. Paragraphs come from block elements and from blank lines (`<br><br>`, which is how SWR's `Details` separates "What's going on" and so on). Unsafe links keep their text without the link, and bare safe `https://` URLs in the text (SWR's `FurtherInfo`) become links. The DOMParser and regex paths give identical output on every real sample.
+- **Demo routes** are `(url, options) => body | null`. `url` is the full request URL, or `data/swr/<path>` for snapshots; `options` is the fetch init (`method: 'POST'`, `body` for `service()`). In `?demo`, `ctx.tfl` also asks `SwrApi.demoRoutes` first and then falls back to the TfL demo data, so S3 can add a route for `https://api.tfl.gov.uk/Line/south-western-railway/Status`. The TfL demo's Waterloo hub now has a `910GWATRLMN` child on the `south-western-railway` line, so "SWR trains from here" shows there.
+- **Station list:** 204 SWR stations, 196 matched to a TfL stop, 6 with a TfL hub (Waterloo, Vauxhall, Clapham Junction, Wimbledon, Richmond and Hampton Court, whose `HUBHAM` has no TfL-tab lines). No TfL stop for the 8 Island Line stations: Brading, Lake, Ryde Esplanade, Ryde Pier Head, Ryde St Johns Road, Sandown, Shanklin and Smallbrook Junction. The name check needs every word of the shorter name to be in the longer one, after dropping brackets and "Rail Station": sharing a first word isn't enough, because Windsor & Eton Riverside is 376 m from Windsor & Eton Central. Where two stops share a point (Reading's `910GRDNGSTN` and `910GRDNG4AB`), the one with more lines wins, so Reading gets the stop with the Elizabeth line.
+- **"Open in TfL tab"** shows, as specified, for every station with a `naptan` or `tflHub`. For SWR-only stations such as Surbiton, the TfL tab then says the station isn't served by the Underground, Elizabeth line, DLR, Overground or Tram. Showing it only for hubs and Reading would need one more field on the station object.
+- **Layout:** both search boxes stay in the top bar, in the same place, and each shows only on its own tab, so the TfL tab looks exactly as before. The SWR quick picks, header and sections are in `#tab-swr`. `#swr-status` comes before the station header, because it's shown before a station is chosen.
+- **Pausing:** `js/app.js` now starts on `DOMContentLoaded`, after `js/swr-app.js` has applied the tab, so a page opened with `?tab=swr` makes no TfL requests at all (the network strip and any `?station=` load the first time the TfL tab is shown). While the SWR tab shows, the TfL station and network-strip ticks are skipped. Measured with Playwright's clock: 61 s on the SWR tab made 0 TfL requests, and switching back made the catch-up requests at once. The SWR tab's 60 s tick likewise runs only while it's showing. Charts are redrawn when the TfL tab is shown, because a hidden panel has no width to measure.
+- **Live check:** a probe module loaded 55 Waterloo departures from railinfo, 40 from Huxley, 17 calling points from `POST /journey/services` (the CORS preflight allows `Content-Type`), and TfL's SWR status ("Special Service") through `ctx.tfl`. Calling `departures('WAT')` twice made one request. `snapshot()` returns `null` from disk without calling `fetch`, because Chromium logs an error for `fetch('file:…')`.
 
 **Goal:** a tab bar under the top bar with **TfL** and **SWR**, and an SWR panel where you pick an SWR station. The TfL tab looks and behaves exactly as it does today.
 

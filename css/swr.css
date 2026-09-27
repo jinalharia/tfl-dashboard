@@ -1,0 +1,45 @@
+/*
+ * The TfL / SWR tab bar and the shared parts of the SWR tab (package S0).
+ * Uses the design tokens from css/styles.css, so light and dark themes follow automatically.
+ * Each SWR package styles its own section in css/swr-<name>.css.
+ */
+
+/* ---------- Tab bar ---------- */
+.tabs {
+  display: flex; gap: 4px; padding: 0 24px;
+  background: var(--surface-1); border-bottom: 1px solid var(--border);
+}
+.tab {
+  position: relative; background: none; border: 0; border-radius: 0;
+  padding: 10px 14px 9px; font-size: 14px; font-weight: 600; color: var(--text-secondary);
+}
+.tab:hover { color: var(--text-primary); background: var(--surface-2); }
+.tab[aria-selected="true"] { color: var(--text-primary); }
+.tab[aria-selected="true"]::after {
+  content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 3px;
+  border-radius: 3px 3px 0 0; background: var(--accent);
+}
+.tab:focus-visible { outline-offset: -2px; }
+@media (forced-colors: active) {
+  .tab[aria-selected="true"]::after { background: CanvasText; }
+}
+
+/* Panels and SWR sections rely on [hidden]; don't let a display rule override it. */
+.tab-panel[hidden], #tab-swr [hidden], #swr-search-form[hidden] { display: none !important; }
+
+/* ---------- SWR tab ---------- */
+.swr-main { padding: 16px 24px 48px; max-width: 1280px; margin: 0 auto; transition: opacity 0.2s; }
+.swr-main.is-refreshing .swr-section { opacity: 0.65; }
+.swr-station-head .station-head { margin-bottom: 12px; }
+.swr-station-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; }
+.swr-station-meta a { color: var(--accent); text-underline-offset: 2px; }
+.swr-crs { font-size: 0.95em; font-weight: 600; color: var(--text-primary); }
+.swr-section { margin-top: 20px; }
+.swr-about { margin-top: 28px; }
+.swr-about summary { cursor: pointer; }
+.swr-about summary.card-title { margin-bottom: 0; }
+
+@media (max-width: 640px) {
+  .tabs { padding: 0 16px; }
+  .swr-main { padding-left: 16px; padding-right: 16px; }
+}
