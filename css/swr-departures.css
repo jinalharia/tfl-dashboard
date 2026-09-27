@@ -1,0 +1,73 @@
+/* ---------- SWR tab, package S1: live departures ---------- */
+/* Uses the tokens and the .status / .toggle / .card / .section-title classes from styles.css. */
+
+#swr-departures .section-sub { margin-bottom: 8px; }
+
+.swr-dep-note {
+  margin: 0 0 8px; padding: 8px 10px; border-radius: 8px; font-size: 13px;
+  background: var(--surface-2); border-left: 3px solid var(--warning); color: var(--text-secondary); max-width: 80ch;
+}
+.swr-dep-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0 0 10px; }
+.swr-dep-empty { margin: 8px 0 0; font-size: 14px; color: var(--text-secondary); }
+.swr-dep-group { font-size: 15px; margin: 18px 0 8px; }
+
+.swr-dep-list { list-style: none; margin: 0; padding: 4px 16px; }
+.swr-dep { padding: 10px 0; border-top: 1px solid var(--gridline); min-width: 0; }
+.swr-dep:first-child { border-top: 0; }
+
+/* time | destination | status, with the platform/length line under the destination. */
+.swr-dep-row {
+  display: grid; grid-template-columns: 3.2em minmax(0, 1fr) auto; align-items: baseline; gap: 2px 12px;
+}
+.swr-dep-time { grid-column: 1; grid-row: 1; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.swr-dep-dest { grid-column: 2; grid-row: 1; min-width: 0; font-size: 15px; overflow-wrap: anywhere; }
+.swr-dep-via { font-size: 13px; color: var(--text-secondary); }
+.swr-dep-status { grid-column: 3; grid-row: 1; justify-self: end; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.swr-dep-meta {
+  grid-column: 2; grid-row: 2; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 2px;
+  font-size: 13px; color: var(--text-secondary); min-width: 0;
+}
+.swr-dep-meta strong { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.swr-dep-sep { color: var(--text-muted); }
+.swr-dep-op { font-style: italic; }
+.swr-dep-bus { font-weight: 600; color: var(--text-primary); }
+.swr-dep-more { grid-column: 3; grid-row: 2; justify-self: end; font-size: 13px; }
+.swr-dep-more[aria-expanded="true"] { font-weight: 600; }
+
+.swr-dep-cancelled .swr-dep-time { text-decoration: line-through; color: var(--text-secondary); }
+.swr-dep-cancelled .swr-dep-dest strong { color: var(--text-secondary); }
+
+.swr-dep-short, .swr-dep-reason { margin: 6px 0 0 calc(3.2em + 12px); font-size: 13px; overflow-wrap: anywhere; }
+.swr-dep-short { display: flex; align-items: baseline; gap: 6px; font-weight: 600; }
+.swr-dep-short-icon {
+  flex: none; display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 8px;
+  font-size: 10px; font-weight: 700; background: var(--warning); color: #0b0b0b; transform: translateY(2px);
+}
+.swr-dep-heuristic {
+  display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 4px; border: 1px solid var(--border);
+  font-size: 11px; font-weight: 500; color: var(--text-secondary); white-space: nowrap;
+}
+.swr-dep-reason { color: var(--text-secondary); padding: 6px 10px; border-radius: 8px; background: var(--surface-2); }
+
+.swr-dep-detail { margin: 8px 0 0 calc(3.2em + 12px); min-width: 0; }
+.swr-dep-detail:empty { margin-top: 0; }
+
+.swr-dep-about { margin-top: 12px; }
+.swr-dep-about summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); }
+.swr-dep-about ul { margin: 8px 0; padding-left: 18px; font-size: 13px; color: var(--text-secondary); max-width: 90ch; }
+.swr-dep-about li { margin-bottom: 6px; overflow-wrap: anywhere; }
+.swr-dep-about a { color: var(--accent); }
+
+@media (max-width: 480px) {
+  .swr-dep-list { padding: 2px 12px; }
+  /* Narrow screens: the status moves under the destination rather than squeezing it. */
+  .swr-dep-row { grid-template-columns: 3.2em minmax(0, 1fr) auto; }
+  .swr-dep-status { grid-column: 2 / 4; grid-row: 2; justify-self: start; }
+  .swr-dep-meta { grid-column: 2; grid-row: 3; }
+  .swr-dep-more { grid-row: 3; }
+  .swr-dep-short, .swr-dep-reason, .swr-dep-detail { margin-left: 0; }
+}
+
+@media (forced-colors: active) {
+  .swr-dep-short-icon { background: CanvasText; color: Canvas; }
+}
