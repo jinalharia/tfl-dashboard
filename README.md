@@ -40,6 +40,27 @@ Opening `index.html` directly from disk also works.
 - **Deep link:** `?station=940GZZLUOXC` opens a station directly. You can use any StopPoint id or hub id, e.g. `HUBSRA`.
 - **App key:** the API works without a key at a lower rate limit. To raise it, register at the [TfL API portal](https://api-portal.tfl.gov.uk/) and paste your primary key into **Settings**. The key is stored only in your browser's `localStorage`.
 
+## Deploying
+
+The site is live at https://jinalharia.github.io/tfl-dashboard/. The workflow in `.github/workflows/pages.yml` runs on every push to `main`, every pull request against `main`, and on demand (*Actions → Test and deploy to Pages → Run workflow*):
+
+- **`test`** runs `npm test` and checks the syntax of every file in `js/` and `tests/`. Pull requests show it as a check.
+- **`deploy`** runs only for a push to `main` or a manual run on `main`, and only if `test` passed. It copies just `index.html`, `css/` and `js/` (plus an empty `.nojekyll`) into `_site/` and publishes that to GitHub Pages. The README, `plan.md`, `tests/`, `package.json` and the workflow itself aren't published.
+
+**One manual step for the repo owner.** In **Settings → Pages → Build and deployment → Source**, choose **GitHub Actions**.
+- Until that's done, Pages keeps deploying every push straight from `main` (all files, tested or not). The workflow's `deploy` job fails, but the `test` job still runs, so nothing else breaks.
+- Once it's switched, a push to `main` is deployed only if the tests pass, and only the site files are published.
+
+To check the published file set locally, build `_site/` with the same commands the workflow uses and serve it:
+
+```sh
+rm -rf _site && mkdir _site && cp -R index.html css js _site/ && touch _site/.nojekyll
+python3 -m http.server 8000 --directory _site
+# open http://localhost:8000/?demo
+```
+
+If you add a file the page loads from outside `index.html`, `css/` and `js/` (an icon, a manifest, a data file), add it to the *Stage site files* step in the workflow too.
+
 ## TfL endpoints used
 
 | Purpose | Endpoint |
@@ -96,6 +117,7 @@ js/chart.js         SVG busyness profile chart with hover/keyboard tooltip
 js/app.js           search, loading, refresh and rendering
 js/demo-data.js     synthetic TfL-shaped responses for ?demo
 tests/              node:test unit tests
+.github/workflows/pages.yml   test on every push and PR; deploy to Pages when tests pass
 ```
 
 Run the tests with `npm test` (Node 18+).
