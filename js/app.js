@@ -844,9 +844,12 @@
           ${loadingHtml}
           ${flowHtml}
           <div class="arrivals"><div class="section-label">Next trains</div>${arrivalsHtml}</div>
+          ${lineStripHtml(line)}
         </article>`;
     }).join('');
+    const stripFocus = focusKey(document.activeElement);
     $('#lines').innerHTML = html;
+    restoreLineStrips(stripFocus);
     renderFlowCharts();
   }
 
@@ -856,6 +859,260 @@
       const line = state.station.lines.find((l) => l.id === el.dataset.line);
       const flows = line && T.summarizePassengerFlows(state.loadings.get(line.id), line);
       if (flows) window.TflChart.renderFlowSparkline(el, flows.bands, nowX, `Typical passenger flow per 15 minutes on the ${line.name} line at this station, peaking at ${T.formatClock(flows.peak.start)}`);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Live crowding along a whole line (on demand, one /crowding/{naptan}/Live request per station)
+  // ---------------------------------------------------------------------------
+  const LINE_LIVE_TTL_MS = 60 * 1000;
+  const LINE_CONCURRENCY = 3;
+  const lineLiveCache = new Map(); // naptan → {at, promise of normalized live | Error}
+  const strips = { stationId: null, views: new Map() }; // lineId → {open, branch, branches, names, readings, loading, limited, error, at, seq, scroll}
+
+  /** Live reading for one station, cached for about a minute and shared by every strip. */
+  function lineLive(naptan) {
+    const hit = lineLiveCache.get(naptan);
+    if (hit && Date.now() - hit.at < LINE_LIVE_TTL_MS) return hit.promise;
+    // The open station's own reading is already loaded by the main refresh.
+    const own = state.live.get(naptan);
+    if (own && !(own instanceof Error) && state.updatedAt && Date.now() - state.updatedAt < LINE_LIVE_TTL_MS) return Promise.resolve(own);
+    const entry = { at: Date.now() };
+    entry.promise = settle(state.client.getLiveCrowding(naptan)).then((r) => {
+      // Keep answers (including 404 "no data"); forget failures so the next try asks again.
+      if (r instanceof Error && r.status !== 404 && lineLiveCache.get(naptan) === entry) lineLiveCache.delete(naptan);
+      return r;
+    });
+    lineLiveCache.set(naptan, entry);
+    return entry.promise;
+  }
+
+  function stripView(lineId) {
+    const id = state.station ? state.station.id : null;
+    if (strips.stationId !== id) { strips.stationId = id; strips.views = new Map(); }
+    if (!strips.views.has(lineId)) {
+      strips.views.set(lineId, { open: false, branch: null, branches: null, names: null, readings: new Map(), loading: false, limited: 0, error: null, at: null, seq: 0, scroll: null });
+    }
+    return strips.views.get(lineId);
+  }
+
+  /** Placeholder on each line card; TfL publishes live crowding only for Underground stations. */
+  function lineStripHtml(line) {
+    if (line.mode !== 'tube') return '';
+    const view = stripView(line.id);
+    return `
+      <div class="line-strip" data-line="${esc(line.id)}">
+        <button type="button" class="ghost strip-toggle" aria-expanded="${view.open}" aria-controls="strip-${esc(line.id)}">${view.open ? 'Hide whole line' : 'Show whole line'}</button>
+        <div class="strip-body" id="strip-${esc(line.id)}"${view.open ? '' : ' hidden'}>${view.open ? stripBodyHtml(line, view) : ''}</div>
+      </div>`;
+  }
+
+  function stripStopHtml(row, loading) {
+    let badge;
+    if (row.state === 'live') badge = `${levelBadge(row.value)}<span class="strip-pct">${pct(row.value)}</span>`;
+    else if (row.state === 'nodata') badge = `${levelBadge(null)}`;
+    else if (row.state === 'error') badge = `<span class="strip-note">${row.error.status === 429 ? 'Not loaded' : 'Unavailable'}</span>`;
+    else badge = `<span class="strip-note">${loading ? 'Loading…' : 'Not loaded'}</span>`;
+    return `
+      <span class="strip-dot" aria-hidden="true"></span>
+      <span class="strip-name">${esc(row.name)}${row.selected ? ' <span class="strip-here">This station</span>' : ''}</span>
+      <span class="strip-level">${badge}</span>`;
+  }
+
+  function stripSummaryText(view, rows) {
+    if (view.loading) return `Loading live busyness for ${rows.length} station${rows.length === 1 ? '' : 's'}…`;
+    const sum = T.lineCrowdingSummary(rows);
+    const c = sum.counts;
+    const parts = [
+      c['very-busy'] && `${c['very-busy']} very busy`, c.busy && `${c.busy} busy`,
+      c.moderate && `${c.moderate} moderately busy`, c.quiet && `${c.quiet} quiet`,
+      c.nodata && `${c.nodata} no data`, (c.error + c.pending) && `${c.error + c.pending} not loaded`,
+    ].filter(Boolean);
+    const time = /[T ](\d{2}:\d{2})/.exec(sum.latest || '');
+    return `${rows.length} station${rows.length === 1 ? '' : 's'}: ${parts.join(', ')}.`
+      + (sum.busiest ? ` Busiest: ${sum.busiest.name} (${sum.busiest.level.label.toLowerCase()}, ${pct(sum.busiest.value)}).` : '')
+      + (time ? ` Readings from ${time[1]}.` : '');
+  }
+
+  function stripBodyHtml(line, view) {
+    if (view.error) return `<p class="small muted">Couldn’t load the ${esc(line.name)} line’s stations: ${esc(view.error.message)}</p><button type="button" class="link strip-refresh">Try again</button>`;
+    if (!view.branches) return '<p class="small muted" role="status">Loading the line’s stations…</p>';
+    const branch = view.branches.find((b) => b.key === view.branch);
+    if (!branch) return `<p class="small muted">TfL’s route list for the ${esc(line.name)} line doesn’t include this station.</p>`;
+    const rows = T.lineCrowdingRows(branch.ids, view.names, view.readings, line.naptan);
+    const picker = view.branches.length > 1
+      ? `<label class="strip-branch small">Branch <select data-line="${esc(line.id)}">${view.branches.map((b) =>
+          `<option value="${esc(b.key)}"${b.key === branch.key ? ' selected' : ''}>${esc(b.name)} (${b.ids.length})</option>`).join('')}</select></label>`
+      : `<div class="small muted">${esc(branch.name)}</div>`;
+    const warn = view.limited
+      ? `<p class="strip-warn small" role="alert">TfL’s rate limit was reached, so ${view.limited} station${view.limited === 1 ? ' wasn’t' : 's weren’t'} loaded. ${DEMO ? '' : '<button type="button" class="link strip-settings">Add an app key in Settings</button> or '}try again in a minute.</p>`
+      : '';
+    const items = rows.map((r) => `<li class="strip-stop strip-${r.state === 'live' ? r.level.key : r.state}${r.selected ? ' is-here' : ''}" data-stop="${esc(r.id)}"${r.selected ? ' aria-current="location"' : ''}>${stripStopHtml(r, view.loading)}</li>`).join('');
+    const status = state.statuses.get(line.id);
+    const notRunning = status && (status.cls === 'critical' || status.cls === 'info') && /clos|suspend|not running/i.test(status.description)
+      ? `<p class="small muted">${esc(line.name)} line: ${esc(status.description)}. The station readings below are still live.</p>`
+      : '';
+    return `
+      ${picker}
+      ${notRunning}
+      <p class="strip-summary small" role="status">${esc(stripSummaryText(view, rows))}</p>
+      ${warn}
+      <ol class="strip-list" tabindex="0" aria-label="Live busyness at each station, ${esc(branch.name)}">${items}</ol>
+      <div class="strip-foot small muted">
+        <span>Live station busyness, not how full trains are. Not refreshed automatically.</span>
+        ${view.loading ? '' : '<button type="button" class="link strip-refresh">Refresh</button>'}
+      </div>`;
+  }
+
+  function stripEl(lineId) {
+    return [...document.querySelectorAll('#lines .line-strip')].find((el) => el.dataset.line === lineId) || null;
+  }
+
+  function renderLineStrip(line, view) {
+    const el = stripEl(line.id);
+    if (!el) return;
+    const body = el.querySelector('.strip-body');
+    const list = body.querySelector('.strip-list');
+    const scroll = list ? list.scrollTop : null;
+    const focused = body.contains(document.activeElement) ? focusKey(document.activeElement) : null;
+    body.innerHTML = stripBodyHtml(line, view);
+    const newList = body.querySelector('.strip-list');
+    if (newList && scroll !== null) newList.scrollTop = scroll;
+    if (focused) restoreFocus(body, focused);
+  }
+
+  /** Update one station's row in place as its reading arrives, so the list doesn't jump. */
+  function renderStripStop(line, view, id) {
+    const el = stripEl(line.id);
+    const branch = view.branches && view.branches.find((b) => b.key === view.branch);
+    if (!el || !branch) return;
+    const li = [...el.querySelectorAll('.strip-stop')].find((x) => x.dataset.stop === id);
+    if (!li) return;
+    const [row] = T.lineCrowdingRows([id], view.names, view.readings, line.naptan);
+    li.className = `strip-stop strip-${row.state === 'live' ? row.level.key : row.state}${row.selected ? ' is-here' : ''}`;
+    li.innerHTML = stripStopHtml(row, view.loading);
+  }
+
+  /** Scroll the list (not the page) so the open station is in view. */
+  function centreStripOnStation(lineId) {
+    const el = stripEl(lineId);
+    const list = el && el.querySelector('.strip-list');
+    const here = list && list.querySelector('.is-here');
+    if (here) list.scrollTop = Math.max(0, here.offsetTop - (list.clientHeight - here.offsetHeight) / 2);
+  }
+
+  async function loadLineStrip(line) {
+    const view = stripView(line.id);
+    const seq = ++view.seq;
+    const current = () => strips.views.get(line.id) === view && view.seq === seq && view.open;
+    view.loading = true;
+    view.error = null;
+    view.limited = 0;
+    const firstTime = !view.branches;
+    if (firstTime) renderLineStrip(line, view);
+    const route = await cached(`route:${line.id}`, () => state.client.getRouteSequence(line.id));
+    if (!current()) return;
+    if (route instanceof Error) {
+      staticCache.delete(`route:${line.id}`);
+      view.loading = false;
+      view.error = route;
+      renderLineStrip(line, view);
+      return;
+    }
+    view.branches = T.lineBranches(route, line.naptan);
+    view.names = T.routeStationNames(route);
+    const branch = view.branches.find((b) => b.key === view.branch) || view.branches[0];
+    view.branch = branch ? branch.key : null;
+    renderLineStrip(line, view);
+    if (firstTime) centreStripOnStation(line.id);
+    if (!branch) { view.loading = false; return; }
+
+    // A few requests at a time, nearest stations first; stop asking once TfL says we're rate limited.
+    let limited = false;
+    await T.mapLimit(T.outwardOrder(branch.ids, branch.index), LINE_CONCURRENCY, async (id) => {
+      if (limited || !current()) return;
+      const r = await lineLive(id);
+      if (!current()) return;
+      if (r instanceof Error && r.status === 429) limited = true;
+      view.readings.set(id, r);
+      renderStripStop(line, view, id);
+    });
+    if (!current()) return;
+    view.loading = false;
+    view.at = new Date();
+    view.limited = limited
+      ? branch.ids.filter((id) => { const r = view.readings.get(id); return !r || (r instanceof Error && r.status === 429); }).length
+      : 0;
+    renderLineStrip(line, view);
+  }
+
+  function onLineStripClick(e) {
+    const btn = e.target.closest('button');
+    const wrap = btn && btn.closest('.line-strip');
+    if (!wrap || !state.station) return;
+    const line = state.station.lines.find((l) => l.id === wrap.dataset.line);
+    if (!line) return;
+    const view = stripView(line.id);
+    if (btn.classList.contains('strip-toggle')) {
+      view.open = !view.open;
+      btn.setAttribute('aria-expanded', String(view.open));
+      btn.textContent = view.open ? 'Hide whole line' : 'Show whole line';
+      const body = wrap.querySelector('.strip-body');
+      body.hidden = !view.open;
+      if (!view.open) { view.seq += 1; view.loading = false; body.textContent = ''; return; }
+      renderLineStrip(line, view);
+      if (view.branches) centreStripOnStation(line.id);
+      loadLineStrip(line);
+    } else if (btn.classList.contains('strip-refresh')) {
+      loadLineStrip(line);
+    } else if (btn.classList.contains('strip-settings')) {
+      openSettings();
+    }
+  }
+
+  function onLineStripChange(e) {
+    const select = e.target.closest('.strip-branch select');
+    if (!select || !state.station) return;
+    const line = state.station.lines.find((l) => l.id === select.dataset.line);
+    if (!line) return;
+    const view = stripView(line.id);
+    view.branch = select.value;
+    renderLineStrip(line, view);
+    centreStripOnStation(line.id);
+    loadLineStrip(line);
+  }
+
+  /** Remember the strips' scroll positions so a full re-render of the line cards keeps them. */
+  function onLineStripScroll(e) {
+    const list = e.target;
+    if (!(list instanceof Element) || !list.classList.contains('strip-list')) return;
+    const wrap = list.closest('.line-strip');
+    if (wrap) stripView(wrap.dataset.line).scroll = list.scrollTop;
+  }
+
+  /** A selector-ish key for the focused control inside #lines, so it can be focused again after a re-render. */
+  function focusKey(el) {
+    const wrap = el && el.closest && el.closest('.line-strip');
+    if (!wrap) return null;
+    const cls = ['strip-toggle', 'strip-refresh', 'strip-settings', 'strip-list'].find((c) => el.classList.contains(c));
+    return { line: wrap.dataset.line, cls: cls || (el.tagName === 'SELECT' ? 'select' : null) };
+  }
+  function restoreFocus(scope, key) {
+    if (!key || !key.cls) return;
+    const target = key.cls === 'select' ? scope.querySelector('select') : scope.querySelector(`.${key.cls}`);
+    if (target) target.focus({ preventScroll: true });
+  }
+
+  /** After renderLines replaces the cards: put back strip scroll positions and keyboard focus. */
+  function restoreLineStrips(focused) {
+    for (const [lineId, view] of strips.views) {
+      const el = stripEl(lineId);
+      const list = el && el.querySelector('.strip-list');
+      if (list && view.scroll !== null) list.scrollTop = view.scroll;
+    }
+    if (focused) {
+      const el = stripEl(focused.line);
+      if (el) restoreFocus(el, focused);
     }
   }
 
@@ -1068,6 +1325,9 @@
     $('#show-station-info').checked = store.get('tfl.showStationInfo') === '1';
     $('#show-station-info').addEventListener('change', onStationInfoToggle);
     if (DEMO) $('#settings-open').hidden = true;
+    $('#lines').addEventListener('click', onLineStripClick);
+    $('#lines').addEventListener('change', onLineStripChange);
+    $('#lines').addEventListener('scroll', onLineStripScroll, true);
     initNetworkStatus();
 
     let resizeTimer = null;

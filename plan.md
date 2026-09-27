@@ -17,7 +17,7 @@ Live site: https://jinalharia.github.io/tfl-dashboard/. GitHub Pages deploys `ma
 | 7 | Santander Cycles near the station | ✅ Done (package A) | A |
 | 8 | Network-wide status strip | ✅ Done (package B) | B |
 | 9 | Planned closures in the next 2 weeks | ✅ Done (package B) | B |
-| 2 | Live crowding along a whole line | ⬜ To do | C |
+| 2 | Live crowding along a whole line | ✅ Done (package C) | C |
 | — | Deploy only when tests pass (GitHub Actions) | ⬜ Optional | D |
 | — | Boarding estimate: trains you may need to let go before boarding | ✅ Done (package E) | E |
 
@@ -72,6 +72,14 @@ One "Station information" section below the tiles, loaded when a station is sele
 - **Tests:** a pure helper to filter and sort upcoming entries, with unit tests.
 
 ### Package C: live crowding along a line (item 2)
+
+**Status: ✅ done.** Each Underground line card has a **Show whole line** button. It opens a ladder of the line's stations in route order, each with its crowding level (status colour, pips, label and %), the open station highlighted and scrolled into view. Nothing is requested until the button is pressed. Notes from building it (checked against the live API on 2026-09-27, a Sunday afternoon):
+- **Branches:** `lineBranches()` keeps the `orderedLineRoutes` through the station, merges each route with its reverse (TfL lists both directions), and sorts longest first. Branching lines get a *Branch* menu. Northern at King's Cross: High Barnet ↔ Morden via Bank (32), Edgware ↔ Morden via Bank (31), Mill Hill East ↔ Morden via Bank (29); the Charing Cross routes don't call there. District at Earl's Court: Ealing Broadway ↔ Upminster (43) first. Route names are HTML-encoded (`&harr;`, double spaces), so `cleanRouteName()` tidies them.
+- **Requests:** `mapLimit()` sends 3 at a time, in `outwardOrder()` from the open station, so nearby stations fill first. `lineLive()` in `js/app.js` caches each station's answer (including "no data") for 60 s, shared across lines and branches, and reuses the main refresh's reading for the open station. Measured: Victoria from Oxford Circus 15 requests, never more than 3 in flight; closing and reopening, or pressing Refresh, within 60 s made 0; Northern at King's Cross 31, then switching to the Edgware branch 9 (only the new stations); Waterloo & City from Waterloo 1 (Bank was cached); District at Earl's Court 42.
+- **429:** simulated by answering 429 from the 6th live request. The strip stops sending, marks the rest "Not loaded", and shows "TfL's rate limit was reached … Add an app key in Settings" (a button that opens Settings). The rest of the page was unaffected.
+- **No data:** stations TfL doesn't cover answer 200 with `dataAvailable: false` and `percentageOfBaseline: 0` (Pimlico, Seven Sisters, St. James's Park, Hammersmith D&P, Kensington (Olympia) on that day), so they show "No data", never 0%. DLR, Tram, Overground and Elizabeth line NaPTANs checked (`940GZZDLBNK`, `940GZZCRWIM`, `910GHGHI`, `910GLIVST`) all had no data, so the button is only on Underground (`mode: tube`) cards.
+- **Not auto-refreshed:** refreshing an open District strip every minute would be 40+ requests a minute on the shared anonymous limit, so the strip has its own *Refresh* link instead. When the line itself is closed (Waterloo & City on Sundays: "Planned Closure") the strip says so; the station readings still show.
+- **Possible follow-up:** "busier/quieter than usual" per station (one more `/crowding/{naptan}/{day}` request each, cacheable for the day).
 
 - **Route:** `GET /Line/{id}/Route/Sequence/{outbound|inbound}` → `{stations[], orderedLineRoutes[{name, naptanIds[]}], stopPointSequences, ...}`. The Victoria line outbound had 1 ordered route of 16 NaPTANs (`940GZZLUBXN` → …). Branching lines such as the Northern and District have several `orderedLineRoutes`, so pick the longest, or let the user choose a branch.
 - **Crowding:** `GET /crowding/{naptan}/Live` per station, which is **one request per station** (16 for Victoria, 60+ for the District line). TfL's anonymous rate limit is low, so:
