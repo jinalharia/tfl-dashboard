@@ -10,9 +10,9 @@
     bakerloo: 'Bakerloo', central: 'Central', circle: 'Circle', 'hammersmith-city': 'Hammersmith & City',
     jubilee: 'Jubilee', metropolitan: 'Metropolitan', northern: 'Northern', piccadilly: 'Piccadilly',
     victoria: 'Victoria', 'waterloo-city': 'Waterloo & City', elizabeth: 'Elizabeth line', dlr: 'DLR',
-    mildmay: 'Mildmay', district: 'District',
+    mildmay: 'Mildmay', district: 'District', 'south-western-railway': 'South Western Railway',
   };
-  const LINE_MODE = { elizabeth: 'elizabeth-line', dlr: 'dlr', mildmay: 'overground' };
+  const LINE_MODE = { elizabeth: 'elizabeth-line', dlr: 'dlr', mildmay: 'overground', 'south-western-railway': 'national-rail' };
   const PLATFORMS = {
     central: ['Eastbound - Platform 1', 'Westbound - Platform 2'],
     jubilee: ['Eastbound - Platform 13', 'Westbound - Platform 14'],
@@ -51,6 +51,8 @@
     '940GZZLUBNK': { name: 'Bank Underground Station', lines: ['central', 'northern', 'waterloo-city'], scale: 1.05, hub: 'HUBBAN' },
     '940GZZDLBNK': { name: 'Bank DLR Station', lines: ['dlr'], scale: 0.6, hub: 'HUBBAN' },
     '940GZZLUWLO': { name: 'Waterloo Underground Station', lines: ['bakerloo', 'jubilee', 'northern', 'waterloo-city'], scale: 1.0, hub: 'HUBWAT' },
+    // National Rail only, like the real HUBWAT child: no crowding tile, but it gives the "SWR trains from here" link.
+    '910GWATRLMN': { name: 'London Waterloo Rail Station', lines: ['south-western-railway'], scale: 0.8, hub: 'HUBWAT' },
   };
   const HUBS = {
     HUBKGX: "King's Cross & St Pancras International",
