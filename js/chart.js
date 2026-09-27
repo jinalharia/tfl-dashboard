@@ -173,5 +173,103 @@
     });
   }
 
-  root.TflChart = { renderProfileChart };
+  /**
+   * Compact single-series area chart for a line card (typical passenger flow per 15 min).
+   * bands: [{x, start, value}] in service-day minutes; nowX: service-day minutes now.
+   */
+  function renderFlowSparkline(container, bands, nowX, label) {
+    const { formatClock } = root.TflApi;
+    container.textContent = '';
+    if (!bands.length) return;
+    const width = Math.max(220, container.clientWidth || 300);
+    const H = 64;
+    const m = { top: 14, right: 6, bottom: 16, left: 6 };
+    const innerW = width - m.left - m.right;
+    const innerH = H - m.top - m.bottom;
+    const minX = bands[0].x;
+    const maxX = bands[bands.length - 1].x + 15;
+    const maxV = Math.max(...bands.map((b) => b.value));
+    const sx = (x) => m.left + ((x - minX) / (maxX - minX || 1)) * innerW;
+    const sy = (v) => m.top + innerH - (v / (maxV || 1)) * innerH;
+    const bx = (b) => sx(b.x + 7.5);
+    const fmt = (v) => Math.round(v).toLocaleString('en-GB');
+
+    const svg = el('svg', { viewBox: `0 0 ${width} ${H}`, width, height: H, class: 'flow-svg', role: 'img' });
+    svg.setAttribute('aria-label', label);
+    el('line', { x1: m.left, x2: width - m.right, y1: sy(0), y2: sy(0), class: 'baseline' }, svg);
+    const pts = bands.map((b) => `${bx(b).toFixed(1)},${sy(b.value).toFixed(1)}`);
+    el('path', { d: `M${bx(bands[0])},${sy(0)} L${pts.join(' L')} L${bx(bands[bands.length - 1])},${sy(0)} Z`, class: 'flow-area' }, svg);
+    el('path', { d: `M${pts.join(' L')}`, class: 'flow-line' }, svg);
+
+    // x ticks every 6 hours
+    const firstTick = Math.ceil((minX + 240) / 360) * 360 - 240;
+    for (let x = firstTick; x <= maxX; x += 360) {
+      const t = el('text', { x: sx(x), y: H - 3, class: 'tick', 'text-anchor': 'middle' }, svg);
+      t.textContent = formatClock(x + 240);
+    }
+
+    // Peak label (the one direct label)
+    const peak = bands.reduce((a, b) => (b.value > a.value ? b : a), bands[0]);
+    const px = bx(peak);
+    el('circle', { cx: px, cy: sy(peak.value), r: 3, class: 'flow-peak' }, svg);
+    const pl = el('text', { x: Math.min(Math.max(px, m.left + 30), width - m.right - 30), y: m.top - 4, class: 'flow-label', 'text-anchor': 'middle' }, svg);
+    pl.textContent = `Peak ${formatClock(peak.start)}`;
+
+    // Now marker
+    if (nowX >= minX && nowX <= maxX) {
+      const nx = sx(nowX);
+      el('line', { x1: nx, x2: nx, y1: m.top, y2: sy(0), class: 'now-rule' }, svg);
+    }
+
+    const cross = el('line', { y1: m.top, y2: sy(0), class: 'crosshair', visibility: 'hidden' }, svg);
+    const hit = el('rect', { x: m.left, y: 0, width: innerW, height: H, class: 'hit', tabindex: 0 }, svg);
+    hit.setAttribute('aria-label', `${label}. Use left and right arrow keys to read values`);
+    const tip = document.createElement('div');
+    tip.className = 'chart-tip flow-tip';
+    tip.hidden = true;
+    container.append(svg, tip);
+
+    let idx = bands.findIndex((b) => b.x <= nowX && nowX < b.x + 15);
+    if (idx < 0) idx = 0;
+    function show(i) {
+      idx = Math.max(0, Math.min(bands.length - 1, i));
+      const b = bands[idx];
+      const x = bx(b);
+      cross.setAttribute('x1', x);
+      cross.setAttribute('x2', x);
+      cross.setAttribute('visibility', 'visible');
+      tip.textContent = '';
+      const v = document.createElement('strong');
+      v.textContent = fmt(b.value);
+      const t = document.createElement('span');
+      t.className = 'tip-name';
+      t.textContent = ` ${formatClock(b.start)}–${formatClock(b.start + 15)}`;
+      tip.append(v, t);
+      tip.hidden = false;
+      const w = tip.offsetWidth || 120;
+      tip.style.left = `${Math.max(0, Math.min(width - w, x - w / 2))}px`;
+      tip.style.top = `${H + 2}px`;
+    }
+    function hide() {
+      cross.setAttribute('visibility', 'hidden');
+      tip.hidden = true;
+    }
+    hit.addEventListener('pointermove', (e) => {
+      const rect = svg.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) * (width / rect.width) - m.left) / innerW * (maxX - minX) + minX - 7.5;
+      let best = 0;
+      for (let i = 1; i < bands.length; i++) if (Math.abs(bands[i].x - x) < Math.abs(bands[best].x - x)) best = i;
+      show(best);
+    });
+    hit.addEventListener('pointerleave', hide);
+    hit.addEventListener('focus', () => show(idx));
+    hit.addEventListener('blur', hide);
+    hit.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight') { show(idx + 1); e.preventDefault(); }
+      if (e.key === 'ArrowLeft') { show(idx - 1); e.preventDefault(); }
+      if (e.key === 'Escape') hide();
+    });
+  }
+
+  root.TflChart = { renderProfileChart, renderFlowSparkline };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -33,7 +33,8 @@
     arrivals: new Map(), // naptan → raw arrivals | Error
     statuses: new Map(), // lineId → status
     statusError: null,
-    loadings: new Map(), // lineId → raw train-loading response
+    loadings: new Map(), // lineId → raw train-loading response (also carries passenger flows)
+    lifts: null, // [{station, lifts, message}] for this station | Error | null
     updatedAt: null,
     token: 0,
     timer: null,
@@ -158,6 +159,7 @@
     state.arrivals.clear();
     state.statuses = new Map();
     state.loadings.clear();
+    state.lifts = null;
     showMessage('Loading station…', 'loading');
 
     const url = new URL(location.href);
@@ -206,16 +208,18 @@
 
   async function loadLive(token) {
     const s = state.station;
-    const [live, arrivals, statuses] = await Promise.all([
+    const [live, arrivals, statuses, lifts] = await Promise.all([
       Promise.all(s.naptans.map(async (n) => [n.id, await settle(state.client.getLiveCrowding(n.id))])),
       Promise.all(s.naptans.map(async (n) => [n.id, await settle(state.client.getArrivals(n.id))])),
       settle(state.client.getLineStatuses(s.lines.map((l) => l.id))),
+      settle(state.client.getLiftDisruptions()),
     ]);
     if (token !== state.token) return;
     state.live = new Map(live);
     state.arrivals = new Map(arrivals);
     state.statusError = statuses instanceof Error ? statuses : null;
     state.statuses = statuses instanceof Error ? new Map() : statuses;
+    state.lifts = lifts instanceof Error ? lifts : T.liftDisruptionsFor(lifts, [s.id, ...s.naptans.map((n) => n.id)]);
     state.updatedAt = new Date();
   }
 
@@ -308,9 +312,48 @@
       : '';
     $('#demo-banner').hidden = !DEMO;
 
+    renderLifts();
     renderTiles();
     renderChart();
     renderLines();
+  }
+
+  function renderLifts() {
+    const box = $('#lift-status');
+    const lifts = state.lifts;
+    if (!lifts || lifts instanceof Error) {
+      // The lift feed is unofficial; if it fails, say nothing rather than imply lifts are fine.
+      box.hidden = true;
+      return;
+    }
+    box.hidden = false;
+    if (!lifts.length) {
+      box.className = 'lift-status lift-ok';
+      box.innerHTML = '<span class="lift-icon" aria-hidden="true">✓</span><span>No lift faults reported at this station.</span>';
+      return;
+    }
+    const count = lifts.reduce((n, l) => n + l.lifts, 0);
+    box.className = 'lift-status lift-alert';
+    box.innerHTML = `
+      <span class="lift-icon" aria-hidden="true">!</span>
+      <div>
+        <strong>Step-free access affected${count ? ` — ${count} lift${count === 1 ? '' : 's'} out of service` : ''}</strong>
+        ${lifts.map((l) => `<p>${esc(l.message)}</p>`).join('')}
+      </div>`;
+  }
+
+  function hintHtml(naptan, liveValue) {
+    const p = state.profiles.get(naptan);
+    if (!p || p instanceof Error || !p.found) return '';
+    const h = T.quieterTimeHint(p.bands, T.londonNow().minutes, liveValue);
+    if (!h) return '';
+    const text = {
+      quieter: () => `Usually quieter from <strong>${T.formatClock(h.start)}</strong> (about ${pct(h.value)})`,
+      stays: () => 'Usually stays this busy for the next 3 hours',
+      busier: () => `Usually gets busier from <strong>${T.formatClock(h.start)}</strong> (about ${pct(h.value)})`,
+      calm: () => 'Usually stays quiet for the next 3 hours',
+    }[h.kind]();
+    return `<div class="tile-hint"><span class="hint-icon" aria-hidden="true">◷</span><span>${text}</span></div>`;
   }
 
   function renderTiles() {
@@ -328,7 +371,7 @@
       } else if (live instanceof Error) {
         body = `<p class="tile-empty">${esc(live.message)}</p>`;
       } else if (!live || !live.available) {
-        body = '<p class="tile-empty">No live reading right now. The feed can pause overnight.</p>';
+        body = `<p class="tile-empty">No live reading right now. The feed can pause overnight.</p>${hintHtml(n.id, null)}`;
       } else {
         // timeLocal is London time without an offset (e.g. "2026-09-26 21:46:00"), so show its clock time as-is.
         const when = /[T ](\d{2}:\d{2})/.exec(live.timeLocal || '');
@@ -336,7 +379,8 @@
           <div class="tile-value">${pct(live.value)}<span class="tile-unit">of baseline</span></div>
           <div class="tile-level">${levelBadge(live.value)}</div>
           <div class="tile-delta">${deltaText(live.value, typical)}${typical !== null ? `<span class="muted"> · usual now ${pct(typical)}</span>` : ''}</div>
-          ${when ? `<div class="muted small">Reading at ${esc(when[1])}</div>` : ''}`;
+          ${when ? `<div class="muted small">Reading at ${esc(when[1])}</div>` : ''}
+          ${hintHtml(n.id, live.value)}`;
       }
       return `
         <article class="tile">
@@ -470,6 +514,20 @@
            ${outlook.reasons.length ? `<div class="small muted">Raised by ${esc(outlook.reasons.join(' and '))}</div>` : ''}`
         : '';
 
+      const flows = state.loadings.has(line.id) ? T.summarizePassengerFlows(state.loadings.get(line.id), line) : null;
+      let flowHtml = '';
+      if (flows) {
+        const nowBand = flows.bands.find((b) => b.x <= T.serviceMinutes(minutes) && T.serviceMinutes(minutes) < b.x + 15);
+        const fmt = (v) => Math.round(v).toLocaleString('en-GB');
+        flowHtml = `
+          <div class="flows">
+            <div class="section-label">Typical passenger flow on this line here</div>
+            <div class="small">${nowBand ? `<strong>${fmt(nowBand.value)}</strong> per 15 min now · ` : ''}<span class="muted">peak ${T.formatClock(flows.peak.start)}–${T.formatClock(flows.peak.start + 15)} (${fmt(flows.peak.value)})</span></div>
+            <div class="flow-chart" data-line="${esc(line.id)}"></div>
+            ${['SAT', 'SUN'].includes(T.londonNow().day) ? '<div class="small muted">TfL publishes one profile for every day, and it follows a weekday commute pattern, so it may not match today.</div>' : ''}
+          </div>`;
+      }
+
       const loadingHtml = loadings.length
         ? `<div class="loadings"><div class="section-label">Typical train loading now</div>${loadings.map((l) => `
             <div class="loading-row"><span class="loading-dir">${esc(l.direction)}</span>
@@ -489,7 +547,7 @@
       const reasons = status && status.reasons.length ? `<p class="reason">${esc(status.reasons[0])}</p>` : '';
 
       return `
-        <article class="line-card" style="--line:${esc(line.colour)}">
+        <article class="line-card" data-line="${esc(line.id)}" style="--line:${esc(line.colour)}">
           <header class="line-head">
             <div class="line-title"><h3>${esc(line.name)}</h3><span class="muted small">${esc(T.MODE_LABELS[line.mode] || line.mode)}</span></div>
             ${statusHtml}
@@ -497,10 +555,21 @@
           ${reasons}
           <div class="crowd">${crowdHtml}${outlookHtml}</div>
           ${loadingHtml}
+          ${flowHtml}
           <div class="arrivals"><div class="section-label">Next trains</div>${arrivalsHtml}</div>
         </article>`;
     }).join('');
     $('#lines').innerHTML = html;
+    renderFlowCharts();
+  }
+
+  function renderFlowCharts() {
+    const nowX = T.serviceMinutes(T.londonNow().minutes);
+    for (const el of document.querySelectorAll('.flow-chart')) {
+      const line = state.station.lines.find((l) => l.id === el.dataset.line);
+      const flows = line && T.summarizePassengerFlows(state.loadings.get(line.id), line);
+      if (flows) window.TflChart.renderFlowSparkline(el, flows.bands, nowX, `Typical passenger flow per 15 minutes on the ${line.name} line at this station, peaking at ${T.formatClock(flows.peak.start)}`);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -552,7 +621,11 @@
     let resizeTimer = null;
     window.addEventListener('resize', () => {
       clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => state.station && renderChart(), 150);
+      resizeTimer = setTimeout(() => {
+        if (!state.station) return;
+        renderChart();
+        renderFlowCharts();
+      }, 150);
     });
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && state.station && state.updatedAt && Date.now() - state.updatedAt > REFRESH_MS) refresh();
