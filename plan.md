@@ -15,8 +15,8 @@ Live site: https://jinalharia.github.io/tfl-dashboard/. GitHub Pages deploys `ma
 | 5 | Station facilities panel | ⬜ To do | A |
 | 6 | Station-specific disruption notices | ⬜ To do | A |
 | 7 | Santander Cycles near the station | ⬜ To do | A |
-| 8 | Network-wide status strip | ⬜ To do | B |
-| 9 | Planned closures in the next 2 weeks | ⬜ To do | B |
+| 8 | Network-wide status strip | ✅ Done (package B) | B |
+| 9 | Planned closures in the next 2 weeks | ✅ Done (package B) | B |
 | 2 | Live crowding along a whole line | ⬜ To do | C |
 | — | Deploy only when tests pass (GitHub Actions) | ⬜ Optional | D |
 | — | Boarding estimate: trains you may need to let go before boarding | ✅ Done (package E) | E |
@@ -51,7 +51,9 @@ One "Station information" section below the tiles, loaded when a station is sele
 
 **Tests for A:** add pure helpers to `js/tfl-api.js` (e.g. `stationFacilities(stop)`, `nearbyBikePointIds(stop)`, `normalizeStationDisruptions(raw)`), with unit tests using the response shapes above.
 
-### Package B: network status (items 8, 9)
+### Package B: network status (items 8, 9) ✅ done
+
+**Built:** a network status strip under the top bar (`networkStatusList()`, refreshed on its own 60 s timer, which follows the Auto-refresh switch once a station is open) and a "Planned closures in the next 14 days" section below the line cards (`upcomingClosures()`, `closureDateRange()`, `formatPeriod()`). Checked against the live API on 2026-09-27: 11 of 20 lines were disrupted, and the range call returned a live incident (Victoria Minor Delays, `disruption.category: "RealTime"`) and repeated DLR entries as well as planned works, so the helper drops live incidents that have already started and de-duplicates. Note that `validityPeriods[].isNow` was `false` even for the Central line closure that was running, so the helper compares dates instead.
 
 **8. All-lines status strip.**
 - **Endpoint:** `GET /Line/Mode/tube,elizabeth-line,dlr,overground,tram/Status`. One request returned 20 lines, each with `lineStatuses[]`, the same shape `normalizeStatuses()` already handles.
