@@ -15,7 +15,7 @@ Search for a station (or pick a popular one) and the dashboard shows:
   - typical passenger flow for that line at the station by time of day, as a small chart
   - the next trains on each platform
 - **Step-free access alerts** when a lift at the station is out of service (or a note that none are reported).
-- **Station information:**
+- **Station information** (off by default; turn it on with the *Station information* toggle next to Auto-refresh, and your browser remembers the choice. While it's off, none of its TfL requests are made):
   - disruption notices TfL has posted for the station (e.g. part closures, escalator faults), with dates
   - facilities (lifts, escalators, toilets, Wi-Fi, cash machines, ticket halls, help points), per network at interchanges
   - the nearest Santander Cycles docks with live bikes, e-bikes and free docks

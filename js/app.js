@@ -36,7 +36,7 @@
     loadings: new Map(), // lineId → raw train-loading response (also carries passenger flows)
     lifts: null, // [{station, lifts, message}] for this station | Error | null
     boarding: new Map(), // lineId → [{dir, to, toName, origin, prevNames, ownRows, arriveRows}]
-    info: { notices: null, bikes: null, bikePlaces: null }, // station information section (package A)
+    info: { notices: null, bikes: null, bikePlaces: null, loaded: false }, // station information section (package A)
     updatedAt: null,
     token: 0,
     timer: null,
@@ -163,7 +163,7 @@
     state.loadings.clear();
     state.lifts = null;
     state.boarding = new Map();
-    state.info = { notices: null, bikes: null, bikePlaces: null };
+    state.info = { notices: null, bikes: null, bikePlaces: null, loaded: false };
     showMessage('Loading station…', 'loading');
 
     const url = new URL(location.href);
@@ -186,7 +186,7 @@
     loadClosures(station);
     document.title = `${station.name} · Live station crowding`;
 
-    await Promise.all([loadProfiles(token), loadLive(token), loadTrainLoadings(token), loadStationInfo(token)]);
+    await Promise.all([loadProfiles(token), loadLive(token), loadTrainLoadings(token), showStationInfo() ? loadStationInfo(token) : null]);
     if (token !== state.token) return;
     render();
     startTimer();
@@ -263,6 +263,24 @@
   const BIKE_RADIUS_M = 800;
   const BIKE_LIMIT = 5;
 
+  /** The "Station information" toggle (off by default): when off, the section is hidden and not fetched. */
+  function showStationInfo() {
+    return $('#show-station-info').checked;
+  }
+
+  async function onStationInfoToggle() {
+    const on = showStationInfo();
+    store.set('tfl.showStationInfo', on ? '1' : null);
+    if (!state.station) return;
+    if (!on) {
+      $('#station-info').hidden = true;
+      return;
+    }
+    const token = state.token;
+    if (!state.info.loaded) await loadStationInfo(token);
+    if (token === state.token && showStationInfo()) renderStationInfo();
+  }
+
   /** Once per station: distances to nearby bike docks (static), then the live parts. */
   async function loadStationInfo(token) {
     const stop = state.station.stop;
@@ -285,6 +303,7 @@
       ids.length ? settle(state.client.getBikeOccupancy(ids)) : Promise.resolve([]),
     ]);
     if (token !== state.token) return;
+    state.info.loaded = true;
     state.info.notices = notices;
     state.info.bikes = occupancy instanceof Error ? occupancy : T.nearestBikePoints(occupancy, state.info.bikePlaces, BIKE_LIMIT);
   }
@@ -312,7 +331,8 @@
     const token = state.token;
     $('#content').classList.add('is-refreshing');
     try {
-      const tasks = [loadLive(token), loadStationInfoLive(token)];
+      const tasks = [loadLive(token)];
+      if (showStationInfo()) tasks.push(state.info.loaded ? loadStationInfoLive(token) : loadStationInfo(token));
       if (T.londonNow().day !== state.profileDay) tasks.push(loadProfiles(token));
       await Promise.all(tasks);
       if (token === state.token) render();
@@ -397,7 +417,8 @@
 
     renderLifts();
     renderTiles();
-    renderStationInfo();
+    if (showStationInfo() && state.info.loaded) renderStationInfo();
+    else $('#station-info').hidden = true;
     renderChart();
     renderLines();
   }
@@ -1044,6 +1065,8 @@
     $('#settings-cancel').addEventListener('click', () => $('#settings').close());
     $('#refresh-now').addEventListener('click', refresh);
     $('#auto-refresh').addEventListener('change', startTimer);
+    $('#show-station-info').checked = store.get('tfl.showStationInfo') === '1';
+    $('#show-station-info').addEventListener('change', onStationInfoToggle);
     if (DEMO) $('#settings-open').hidden = true;
     initNetworkStatus();
 

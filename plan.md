@@ -31,7 +31,7 @@ Packages A, B and C can run in parallel. Each one touches `js/app.js`, `index.ht
 
 ### Package A: station information (items 5, 6, 7)
 
-**Status: ✅ done.** A "Station information" section below the tiles has station notices, a facilities card and a Santander Cycles card. Notes from building it:
+**Status: ✅ done.** A "Station information" section below the tiles has station notices, a facilities card and a Santander Cycles card. It's **off by default** behind a "Station information" toggle next to Auto-refresh (`#show-station-info`, remembered in `localStorage` as `tfl.showStationInfo`). While it's off, none of its requests are made; turning it on loads it for the open station. Notes from building it:
 - `getStation()` now also returns the raw stop as `station.stop`.
 - `/StopPoint/940GZZLUKSX` returns the `HUBKGX` hub. Its National Rail children (`910GKNGX`, `910GSTPXBOX`) have their own facility values, and they're shown as a separate "National Rail" group. Stratford's three children list identical values, so they're merged into one group, and the card says so.
 - `NearestPlaces` lists docks in **id order, not distance order**. To pick the nearest 5, one static `/Place?type=BikePoint&lat&lon&radius=800` request per station gives `places[].distance`. If it fails, docks show in listed order without distances.
