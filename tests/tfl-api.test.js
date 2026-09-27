@@ -288,3 +288,109 @@ test('boardingEstimate: trains arriving full leave little room at a through stat
   // No typical data for this slice: no estimate.
   assert.equal(T.boardingEstimate({ depart: null, origin: true }), null);
 });
+
+// ---------------------------------------------------------------------------
+// Network status (Package B)
+// ---------------------------------------------------------------------------
+
+// Trimmed from GET /Line/Mode/tube,elizabeth-line,dlr,overground,tram/Status on 2026-09-27 (20 lines returned).
+const NETWORK_STATUS = [
+  { id: 'bakerloo', name: 'Bakerloo', modeName: 'tube', lineStatuses: [{ statusSeverity: 10, statusSeverityDescription: 'Good Service', validityPeriods: [] }] },
+  { id: 'central', name: 'Central', modeName: 'tube', lineStatuses: [{ statusSeverity: 5, statusSeverityDescription: 'Part Closure', reason: 'CENTRAL LINE: Saturday 26 September & Sunday 27 September, no service (including Saturday Night Tube) between Liverpool Street and Woodford / Newbury Park.', validityPeriods: [{ fromDate: '2026-09-26T03:32:00Z', toDate: '2026-09-28T00:29:00Z', isNow: false }] }] },
+  { id: 'district', name: 'District', modeName: 'tube', lineStatuses: [{ statusSeverity: 9, statusSeverityDescription: 'Minor Delays', reason: "District Line: Minor delays between Earl's Court and Wimbledon due to train cancellations.", validityPeriods: [{ fromDate: '2026-09-27T05:45:59Z', toDate: '2026-09-28T00:29:00Z', isNow: true }] }] },
+  { id: 'dlr', name: 'DLR', modeName: 'dlr', lineStatuses: [{ statusSeverity: 5, statusSeverityDescription: 'Part Closure', reason: 'DOCKLANDS LIGHT RAILWAY: Sunday 27 September, no service between Shadwell and Tower Gateway.' }] },
+  { id: 'elizabeth', name: 'Elizabeth line', modeName: 'elizabeth-line', lineStatuses: [{ statusSeverity: 5, statusSeverityDescription: 'Part Closure' }] },
+  { id: 'liberty', name: 'Liberty', modeName: 'overground', lineStatuses: [{ statusSeverity: 10, statusSeverityDescription: 'Good Service' }] },
+  { id: 'tram', name: 'Tram', modeName: 'tram', lineStatuses: [{ statusSeverity: 10, statusSeverityDescription: 'Good Service' }] },
+  { id: 'waterloo-city', name: 'Waterloo & City', modeName: 'tube', lineStatuses: [{ statusSeverity: 4, statusSeverityDescription: 'Planned Closure', reason: 'Waterloo & City line: service operates 06:00 until 00:30, Monday to Friday only.' }] },
+];
+
+test('networkStatusList puts the worst status first, then by mode (Underground first) and name', () => {
+  const list = T.networkStatusList(NETWORK_STATUS);
+  assert.deepEqual(list.map((l) => l.id), ['waterloo-city', 'central', 'elizabeth', 'dlr', 'district', 'bakerloo', 'liberty', 'tram']);
+  const wc = list[0];
+  assert.equal(wc.cls, 'critical');
+  assert.equal(wc.description, 'Planned Closure');
+  assert.equal(wc.mode, 'tube');
+  assert.equal(wc.colour, '#95CDBA');
+  assert.equal(list.find((l) => l.id === 'district').cls, 'warning');
+  assert.equal(list.find((l) => l.id === 'liberty').colour, '#5D6061');
+  assert.deepEqual(list.find((l) => l.id === 'bakerloo').reasons, []);
+});
+
+test('networkStatusList tolerates junk and repeated lines', () => {
+  assert.deepEqual(T.networkStatusList(null), []);
+  assert.deepEqual(T.networkStatusList({ message: 'error' }), []);
+  const list = T.networkStatusList([null, NETWORK_STATUS[0], NETWORK_STATUS[0], { id: 'x', lineStatuses: [] }]);
+  assert.deepEqual(list.map((l) => [l.id, l.cls]), [['x', 'info'], ['bakerloo', 'good']]);
+});
+
+test('closureDateRange uses the London calendar date and spans 14 days by default', () => {
+  // 23:30 UTC on 26 Sep is 00:30 BST on 27 Sep in London.
+  assert.deepEqual(T.closureDateRange(new Date('2026-09-26T23:30:00Z')), { start: '2026-09-27', end: '2026-10-11' });
+  assert.deepEqual(T.closureDateRange(new Date('2026-12-25T12:00:00Z'), 14), { start: '2026-12-25', end: '2027-01-08' });
+  assert.deepEqual(T.closureDateRange(new Date('2026-10-20T12:00:00Z'), 3), { start: '2026-10-20', end: '2026-10-23' });
+});
+
+// Trimmed from GET /Line/central,jubilee,elizabeth,dlr,mildmay,victoria,bakerloo/Status/2026-09-27/to/2026-10-11 on 2026-09-27.
+const planned = (description) => ({ category: 'PlannedWork', categoryDescription: 'PlannedWork', description });
+const RANGE_STATUS = [
+  { id: 'bakerloo', name: 'Bakerloo', lineStatuses: [{ statusSeverity: 10, statusSeverityDescription: 'Good Service', validityPeriods: [] }] },
+  { id: 'central', name: 'Central', lineStatuses: [{ lineId: 'central', statusSeverity: 5, statusSeverityDescription: 'Part Closure', reason: 'CENTRAL LINE: Saturday 26 September & Sunday 27 September, no service between Liverpool Street and Woodford / Newbury Park.', validityPeriods: [{ fromDate: '2026-09-26T03:32:00Z', toDate: '2026-09-28T00:29:00Z', isNow: false }], disruption: planned('CENTRAL LINE: …') }] },
+  { id: 'dlr', name: 'DLR', lineStatuses: [
+    { lineId: 'dlr', statusSeverity: 5, statusSeverityDescription: 'Part Closure', reason: 'DOCKLANDS LIGHT RAILWAY: Saturday 10 and Sunday 11 October, no service between Stratford International and Woolwich Arsenal.', validityPeriods: [{ fromDate: '2026-10-10T03:30:00Z', toDate: '2026-10-12T00:29:00Z', isNow: false }], disruption: planned('') },
+    { lineId: 'dlr', statusSeverity: 5, statusSeverityDescription: 'Part Closure', reason: 'DOCKLANDS LIGHT RAILWAY: Sunday 4 October, no service between Shadwell and Tower Gateway.', validityPeriods: [{ fromDate: '2026-10-04T03:30:00Z', toDate: '2026-10-05T00:29:00Z', isNow: false }], disruption: planned('') },
+    { lineId: 'dlr', statusSeverity: 5, statusSeverityDescription: 'Part Closure', reason: 'DOCKLANDS LIGHT RAILWAY: Sunday 4 October, no service between Shadwell and Tower Gateway.', validityPeriods: [{ fromDate: '2026-10-04T03:30:00Z', toDate: '2026-10-05T00:29:00Z', isNow: false }], disruption: planned('') },
+  ] },
+  { id: 'elizabeth', name: 'Elizabeth line', lineStatuses: [
+    { lineId: 'elizabeth', statusSeverity: 5, statusSeverityDescription: 'Part Closure', reason: 'ELIZABETH LINE: Sunday 27 September, between 0120 and 0800, no service between West Drayton and Maidenhead.', validityPeriods: [{ fromDate: '2026-09-27T00:20:00Z', toDate: '2026-09-27T07:00:00Z', isNow: false }], disruption: planned('') },
+    { lineId: 'elizabeth', statusSeverity: 7, statusSeverityDescription: 'Reduced Service', reason: 'ELIZABETH LINE: Sunday 27 September, from 0800, a reduced service operates between Paddington and Heathrow Terminal 4 / 5.', validityPeriods: [{ fromDate: '2026-09-27T07:00:00Z', toDate: '2026-09-28T00:29:00Z', isNow: false }], disruption: planned('') },
+  ] },
+  { id: 'jubilee', name: 'Jubilee', lineStatuses: [{ lineId: 'jubilee', statusSeverity: 5, statusSeverityDescription: 'Part Closure', reason: 'JUBILEE LINE: Saturday 3 October, between 0130 and 0430, no service between Finchley Road and Stratford.', validityPeriods: [{ fromDate: '2026-10-03T00:30:00Z', toDate: '2026-10-03T03:30:00Z', isNow: false }], disruption: planned('') }] },
+  { id: 'victoria', name: 'Victoria', lineStatuses: [{ lineId: 'victoria', statusSeverity: 9, statusSeverityDescription: 'Minor Delays', reason: 'Victoria Line: Minor delays due to train cancellations.', validityPeriods: [{ fromDate: '2026-09-27T01:23:19Z', toDate: '2026-09-28T00:29:00Z', isNow: true }], disruption: { category: 'RealTime', description: '' } }] },
+];
+
+test('upcomingClosures keeps upcoming and ongoing planned works, soonest first', () => {
+  const now = new Date('2026-09-27T08:00:00Z');
+  const list = T.upcomingClosures(RANGE_STATUS, now);
+  assert.deepEqual(
+    list.map((c) => [c.lineId, c.from.slice(0, 10), c.current]),
+    [
+      ['central', '2026-09-26', true], // ongoing planned work
+      ['elizabeth', '2026-09-27', true], // reduced service from 08:00 BST, still planned
+      ['jubilee', '2026-10-03', false],
+      ['dlr', '2026-10-04', false], // TfL repeated this entry; merged
+      ['dlr', '2026-10-10', false],
+    ]
+  );
+  // Dropped: Good Service, the Elizabeth line closure that ended at 07:00Z, and the live Victoria delays.
+  const jub = list.find((c) => c.lineId === 'jubilee');
+  assert.equal(jub.description, 'Part Closure');
+  assert.equal(jub.cls, 'serious');
+  assert.equal(jub.planned, true);
+  assert.equal(jub.colour, '#A0A5A9');
+  assert.equal(jub.to, '2026-10-03T03:30:00.000Z');
+  assert.match(jub.reason, /Finchley Road and Stratford/);
+});
+
+test('upcomingClosures keeps a future unplanned entry but not one already running', () => {
+  const now = new Date('2026-09-27T00:00:00Z');
+  const list = T.upcomingClosures(RANGE_STATUS, now);
+  // Before 01:23Z the Victoria delays hadn't started, so they count as upcoming.
+  assert.ok(list.some((c) => c.lineId === 'victoria' && !c.planned && !c.current));
+  assert.ok(list.some((c) => c.lineId === 'elizabeth' && c.description === 'Part Closure'));
+  assert.deepEqual(T.upcomingClosures(null, now), []);
+  assert.deepEqual(T.upcomingClosures([{ id: 'x', lineStatuses: [{ statusSeverity: 5, validityPeriods: [{ fromDate: 'nonsense' }] }] }], now), []);
+});
+
+test('upcomingClosures treats zone-less timestamps as UTC', () => {
+  const raw = [{ id: 'jubilee', name: 'Jubilee', lineStatuses: [{ statusSeverity: 5, statusSeverityDescription: 'Part Closure', validityPeriods: [{ fromDate: '2026-10-03T00:30:00', toDate: '2026-10-03T03:30:00' }] }] }];
+  assert.equal(T.upcomingClosures(raw, new Date('2026-09-27T08:00:00Z'))[0].from, '2026-10-03T00:30:00.000Z');
+});
+
+test('formatPeriod shows London time and collapses same-day periods', () => {
+  assert.equal(T.formatPeriod('2026-10-03T00:30:00.000Z', '2026-10-03T03:30:00.000Z'), 'Sat 3 Oct 01:30–04:30');
+  assert.equal(T.formatPeriod('2026-10-04T03:30:00.000Z', '2026-10-05T00:29:00.000Z'), 'Sun 4 Oct 04:30 – Mon 5 Oct 01:29');
+  // After the clocks go back (25 Oct 2026), London is on GMT.
+  assert.equal(T.formatPeriod('2026-11-01T09:00:00.000Z', null), 'From Sun 1 Nov 09:00');
+});
