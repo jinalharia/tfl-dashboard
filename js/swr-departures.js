@@ -356,7 +356,7 @@
     if (sum.cancelled) bits.push(`${sum.cancelled} cancelled`);
     if (sum.late) bits.push(`${sum.late} late`);
     if (sum.short) bits.push(`${sum.short} short train${sum.short === 1 ? '' : 's'}`);
-    if (updated) bits.push(`updated ${updated}`);
+    if (updated) bits.push(`as of ${updated}`);
 
     const notes = [];
     if (note) notes.push(note);
@@ -672,7 +672,8 @@
       : Promise.reject(new Error(`SwrApi.${name} is missing`)));
     const [rail, hux] = await Promise.allSettled([call('departures'), call('huxleyDepartures')]);
     // Drop late responses: the station changed, or a newer load finished first.
-    if (token !== state.token || (ctx && ctx.token !== token) || seq < state.seq) return;
+    const stale = ctx && typeof ctx.isStale === 'function' ? ctx.isStale() : ctx && ctx.token !== token;
+    if (stale || token !== state.token || seq < state.seq) return;
     const railinfo = rail.status === 'fulfilled' ? rail.value : null;
     const huxley = hux.status === 'fulfilled' ? hux.value : null;
     const railOk = Boolean(railinfo && Array.isArray(railinfo.Items));

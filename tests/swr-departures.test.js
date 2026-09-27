@@ -347,7 +347,7 @@ test('renderBoard implements the S2 row contract', () => {
   assert.match(html, /volunteer-run/);
   assert.match(html, /Exp 19:45, 15 min late/);
   assert.match(html, /status status-serious/);
-  assert.match(html, /updated 19:22/);
+  assert.match(html, /as of 19:22/);
 });
 
 test('renderBoard escapes API strings', () => {
