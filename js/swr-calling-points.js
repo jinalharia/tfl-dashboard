@@ -248,7 +248,8 @@
   /** { cls, icon, text } for one stop. Colour always comes with this text. */
   function stopStatus(stop) {
     let cls = STATUS_CLASS[stop.status] || 'info';
-    if (stop.status === 'late' && stop.lateMinutes >= 10) cls = 'serious';
+    // Same bands as S1's board: 1-4 minutes late is amber, 5 or more orange.
+    if (stop.status === 'late' && stop.lateMinutes >= 5) cls = 'serious';
     let text;
     switch (stop.status) {
       case 'cancelled': text = 'Cancelled'; break;
@@ -661,6 +662,39 @@
 
   // Controls whose focus survives a repaint (S1 re-dispatches the event on every refresh).
   const FOCUSABLE = ['.swr-cp-toggle', '.swr-cp-about summary'];
+  const focusMemo = new WeakMap(); // container -> { sel, lostAt }
+  const watched = new WeakSet();
+
+  /**
+   * Remember which of our controls has focus. S1's refresh takes the open container out of the
+   * page for a moment, which drops focus to <body>; restoreFocus() puts it back when S1
+   * re-dispatches the event straight after, but not if the user had moved focus away.
+   */
+  function watchFocus(container) {
+    if (watched.has(container)) return;
+    watched.add(container);
+    container.addEventListener('focusin', (e) => {
+      const sel = FOCUSABLE.find((s) => e.target.matches && e.target.matches(s));
+      if (sel) focusMemo.set(container, { sel, lostAt: null }); else focusMemo.delete(container);
+    });
+    container.addEventListener('focusout', (e) => {
+      const memo = focusMemo.get(container);
+      if (!memo) return;
+      if (e.relatedTarget && !container.contains(e.relatedTarget)) focusMemo.delete(container);
+      else memo.lostAt = Date.now();
+    });
+  }
+
+  function restoreFocus(container) {
+    const memo = focusMemo.get(container);
+    const doc = container.ownerDocument;
+    if (!memo || !doc) return;
+    const active = doc.activeElement;
+    if (active && active !== doc.body && active !== doc.documentElement) return;
+    if (memo.lostAt !== null && Date.now() - memo.lostAt > 1000) { focusMemo.delete(container); return; }
+    const el = container.querySelector(memo.sel);
+    if (el) el.focus();
+  }
 
   function paint(container, model, id, crs, note) {
     const uid = `swr-cp-${String(id).replace(/[^A-Za-z0-9_-]/g, '')}`;
@@ -698,8 +732,10 @@
 
     const known = state.remembered.get(id);
     const shown = container.querySelector('.swr-cp');
+    watchFocus(container);
     if (shown && shown.getAttribute('data-service-id') === id) {
       // Already showing this train (S1 kept the container across its refresh): update in place.
+      restoreFocus(container);
     } else if (known) paint(container, toModel(known, crs), id, crs);
     else container.innerHTML = '<p class="swr-cp-loading" role="status">Loading calling points…</p>';
     container.setAttribute('aria-busy', 'true');
