@@ -41,6 +41,7 @@
     token: 0,
     timer: null,
     busy: false,
+    pendingStation: null, // ?station= while the TfL tab starts hidden: loaded when it's shown
   };
 
   function makeClient() {
@@ -344,7 +345,8 @@
 
   function startTimer() {
     stopTimer();
-    if ($('#auto-refresh').checked) state.timer = setInterval(refresh, REFRESH_MS);
+    // While the SWR tab is showing, skip the tick (saves TfL rate limit); onTflShown() catches up.
+    if ($('#auto-refresh').checked) state.timer = setInterval(() => { if (!tflHidden()) refresh(); }, REFRESH_MS);
   }
   function stopTimer() {
     if (state.timer) clearInterval(state.timer);
@@ -414,6 +416,7 @@
       ? `Updated ${state.updatedAt.toLocaleTimeString('en-GB', { timeZone: 'Europe/London' })}`
       : '';
     $('#demo-banner').hidden = !DEMO;
+    renderSwrLink(s);
 
     renderLifts();
     renderTiles();
@@ -421,6 +424,15 @@
     else $('#station-info').hidden = true;
     renderChart();
     renderLines();
+  }
+
+  /** "SWR trains from here" when the station (or a child, e.g. 910GWATRLMN at HUBWAT) is on the south-western-railway line. */
+  function renderSwrLink(s) {
+    const box = $('#station-swr');
+    if (!box) return;
+    const swr = window.SwrApi && window.SwrApp ? window.SwrApi.swrStationForTflStop(s.stop) : null;
+    box.hidden = !swr;
+    box.dataset.crs = swr ? swr.crs : '';
   }
 
   function renderLifts() {
@@ -1261,7 +1273,7 @@
   }
 
   function networkTick() {
-    if (document.visibilityState === 'hidden') return;
+    if (document.visibilityState === 'hidden' || tflHidden()) return;
     // With a station open, follow its auto-refresh switch; otherwise always keep the strip fresh.
     if (state.station && !$('#auto-refresh').checked) return;
     loadNetworkStatus();
@@ -1272,10 +1284,52 @@
     $('#network-lines').addEventListener('click', onNetworkClick);
     $('#refresh-now').addEventListener('click', loadNetworkStatus);
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && (!network.updatedAt || Date.now() - network.updatedAt > REFRESH_MS)) loadNetworkStatus();
+      if (document.visibilityState === 'visible' && !tflHidden() && (!network.updatedAt || Date.now() - network.updatedAt > REFRESH_MS)) loadNetworkStatus();
     });
     network.timer = setInterval(networkTick, REFRESH_MS);
-    loadNetworkStatus();
+    // When the page opens on the SWR tab, the strip loads the first time the TfL tab is shown.
+    if (!tflHidden()) loadNetworkStatus();
+  }
+
+  // ---------------------------------------------------------------------------
+  // TfL / SWR tabs (the tab bar itself is in js/swr-app.js)
+  // ---------------------------------------------------------------------------
+
+  /** True while the SWR tab is showing: the station refresh and network strip skip their ticks. */
+  function tflHidden() {
+    const panel = document.getElementById('tab-tfl');
+    return Boolean(panel && panel.hidden);
+  }
+
+  /** The TfL tab is showing again: load a waiting station, or catch up on anything that's gone stale. */
+  function onTflShown() {
+    if (state.pendingStation) {
+      const id = state.pendingStation;
+      state.pendingStation = null;
+      loadStation(id);
+    } else if (state.station) {
+      // Charts drawn while the tab was hidden had no width to measure.
+      renderChart();
+      renderFlowCharts();
+      if ($('#auto-refresh').checked && (!state.updatedAt || Date.now() - state.updatedAt > REFRESH_MS)) refresh();
+    }
+    if (state.station && !$('#auto-refresh').checked) return;
+    if (!network.updatedAt || Date.now() - network.updatedAt > REFRESH_MS) loadNetworkStatus();
+    if (state.station && !state.pendingStation && Date.now() - closures.loadedAt > CLOSURE_REFRESH_MS) loadClosures(state.station);
+  }
+
+  /** Open a station on the TfL tab (the SWR tab's "Open in TfL tab" uses this). If the tab is hidden, it loads when shown. */
+  function openStation(id) {
+    $('#station-search').value = '';
+    closeResults();
+    if (tflHidden()) {
+      state.pendingStation = id;
+      const url = new URL(location.href);
+      url.searchParams.set('station', id);
+      history.replaceState(null, '', url);
+    } else {
+      loadStation(id);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1340,13 +1394,23 @@
       }, 150);
     });
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && state.station && state.updatedAt && Date.now() - state.updatedAt > REFRESH_MS) refresh();
+      if (document.visibilityState === 'visible' && !tflHidden() && state.station && state.updatedAt && Date.now() - state.updatedAt > REFRESH_MS) refresh();
+    });
+    document.addEventListener('dashboard:tabchange', (e) => { if (e.detail && e.detail.tab === 'tfl') onTflShown(); });
+    $('#station-swr-open').addEventListener('click', () => {
+      const crs = $('#station-swr').dataset.crs;
+      if (crs && window.SwrApp) window.SwrApp.open(crs);
     });
 
     const initial = params.get('station');
-    if (initial) loadStation(initial);
-    else showMessage('Search for a station, or pick one above, to see live crowding for every line that serves it.', 'info');
+    showMessage('Search for a station, or pick one above, to see live crowding for every line that serves it.', 'info');
+    if (initial && tflHidden()) state.pendingStation = initial;
+    else if (initial) loadStation(initial);
   }
 
-  init();
+  window.TflApp = { openStation };
+
+  // Start after every script has run: js/swr-app.js decides first which tab is showing.
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();

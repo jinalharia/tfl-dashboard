@@ -25,6 +25,13 @@ Search for a station (or pick a popular one) and the dashboard shows:
 
 The page refreshes live data every 60 seconds. You can switch this off.
 
+### South Western Railway tab
+
+A tab bar under the top bar switches between **TfL** (everything above) and **SWR**, for South Western Railway trains. The SWR tab has its own station search over all 204 SWR stations (by name or station code, e.g. `SUR`), quick picks, and a station header with an *Auto-refresh (60 s)* switch and *Refresh now*. Its sections (departures, service status, seat busyness, closures, punctuality) are being added package by package; see `plan.md`.
+
+- Stations TfL also covers (Waterloo, Vauxhall, Clapham Junction, Wimbledon, Richmond) link between the tabs: **Open in TfL tab** on the SWR tab, and **SWR trains from here** on a TfL station served by SWR.
+- Nothing on the SWR tab is requested until you first open it, and while it's showing, the TfL tab's refresh and network strip pause (they catch up when you switch back). The browser remembers the last tab.
+
 ## Running it
 
 It has no build step and no dependencies. Serve the folder with any static server:
@@ -37,14 +44,14 @@ python3 -m http.server 8000
 Opening `index.html` directly from disk also works.
 
 - **Demo mode:** add `?demo` to the URL (e.g. `http://localhost:8000/?demo`) to use synthetic data shaped like the TfL responses. It's useful offline or when you're rate limited.
-- **Deep link:** `?station=940GZZLUOXC` opens a station directly. You can use any StopPoint id or hub id, e.g. `HUBSRA`.
+- **Deep link:** `?station=940GZZLUOXC` opens a station directly. You can use any StopPoint id or hub id, e.g. `HUBSRA`. `?tab=swr&swr=WAT` opens the SWR tab at London Waterloo (any SWR station code).
 - **App key:** the API works without a key at a lower rate limit. To raise it, register at the [TfL API portal](https://api-portal.tfl.gov.uk/) and paste your primary key into **Settings**. The key is stored only in your browser's `localStorage`.
 
 ## Deploying
 
 The site is live at https://jinalharia.github.io/tfl-dashboard/. The workflow in `.github/workflows/pages.yml` runs on every push to `main`, every pull request against `main`, and on demand (*Actions → Test and deploy to Pages → Run workflow*):
 
-- **`test`** runs `npm test` and checks the syntax of every file in `js/` and `tests/`. Pull requests show it as a check.
+- **`test`** runs `npm test` and checks the syntax of every file in `js/`, `tests/` and `scripts/`. Pull requests show it as a check.
 - **`deploy`** runs only for a push to `main` or a manual run on `main`, and only if `test` passed. It copies just `index.html`, `css/` and `js/` (plus an empty `.nojekyll`) into `_site/` and publishes that to GitHub Pages. The README, `plan.md`, `tests/`, `package.json` and the workflow itself aren't published.
 
 **One manual step for the repo owner.** In **Settings → Pages → Build and deployment → Source**, choose **GitHub Actions**.
@@ -107,15 +114,41 @@ Boarders ÷ room gives a ratio, scaled by live ÷ typical station busyness, ×1.
 
 **Platform outlook** (lines without loading data) is this dashboard's own heuristic, not a TfL figure. It starts from the station's live level and raises it for disruption on that line (a full step for severe disruption, part of a step for minor delays) and a little when the next train is 8 or more minutes away.
 
+## SWR and National Rail endpoints
+
+The SWR tab's client is `js/swr-api.js`. These sources send `Access-Control-Allow-Origin: *`, so the page calls them directly. Neither SWR's nor Huxley2's API is official or documented, so the page must keep working when either fails.
+
+| Purpose | Endpoint | Used by |
+|---|---|---|
+| SWR live departures | `GET https://railinfo.southwesternrailway.com/journey/departures/{CRS}` → `{Station, GeneratedAt, Items[{Id, Operator, Platform, ScheduledTime, EstimatedTime, Origin, Destination}], BusItems}`. CRS code only (`/departures/Surbiton` returns 500). `SwrApi.departures(crs)`, cached 30 s. | S1 |
+| SWR calling points | `POST https://railinfo.southwesternrailway.com/journey/services` with `{"ServiceId": "<Id>"}` → `{Platform, ScheduledDeparture, ActualDeparture, GeneratedAt, LastLocation, CallingPoints[]}`. `SwrApi.service(id)`. | S2 |
+| National Rail departures (Huxley2, a community wrapper) | `GET https://huxley2.azurewebsites.net/departures/{CRS}/40` → `trainServices[]` (`serviceID` = railinfo `Id`, `length`, `delayReason`, `cancelReason`) and `nrccMessages[{value}]` (HTML). `SwrApi.huxleyDepartures(crs)`, cached 30 s so S1 and S3 share one request. | S1, S3 |
+| National Rail service (Huxley2) | `GET https://huxley2.azurewebsites.net/service/{serviceID}` → `previousCallingPoints`, `subsequentCallingPoints`. `SwrApi.huxleyService(id)`. | S2 |
+| SWR snapshots published with the site | `GET data/swr/{path}` (written by S7). `SwrApi.snapshot(path)` returns `null` on any failure, and doesn't try when the page is opened from disk. | S3, S4, S6 |
+| TfL status for SWR | `GET https://api.tfl.gov.uk/Line/south-western-railway/Status` through the shared TfL client (`ctx.tfl`). | S3 |
+| SWR station list (build time only) | `GET https://www.southwesternrailway.com/api/swrstations` → `[{Name, CrsCode, NationalLocationCode, Latitude, Longitude, Url}]` (204 on 2026-09-27). No CORS, so `scripts/swr-stations.js` fetches it and writes `js/swr-stations.js`. | S0 |
+| TfL stops on the SWR line (build time only) | `GET https://api.tfl.gov.uk/Line/south-western-railway/StopPoints` (202 stops) → `naptanId`, `commonName`, `lat`, `lon`, `hubNaptanCode`. Each SWR station is matched to the nearest `910G…` stop within 400 m whose name agrees. The 8 Island Line stations (Brading, Lake, Ryde Esplanade, Ryde Pier Head, Ryde St Johns Road, Sandown, Shanklin, Smallbrook Junction) have no TfL stop. | S0 |
+
+**Station list.** `js/swr-stations.js` is generated, committed, and loaded as a classic script so the page works from disk. Rerun `node scripts/swr-stations.js` by hand when SWR's station list changes (or `--swr file.json --tfl file.json` to use saved responses).
+
+**HTML from SWR and National Rail** (incident details, `nrccMessages`) is never put into the page as HTML. `SwrApi.htmlToText()` turns it into paragraphs of plain text and links, keeping links only when they're `https:` to southwesternrailway.com, nationalrail.co.uk, networkrail.co.uk or tfl.gov.uk, and repairing the broken `http://https://…` links seen in real messages. `SwrApi.renderParagraphs()` builds the DOM from that.
+
 ## Project layout
 
 ```
-index.html          page shell
+index.html          page shell: tab bar, TfL tab, SWR tab
 css/styles.css      styles (light + dark themes)
+css/swr.css         tab bar and shared SWR tab styles
+css/swr-*.css       one file per SWR package (departures, calling-points, status, seats, closures, performance)
 js/tfl-api.js       API client and response normalisation (pure helpers are unit-tested)
 js/chart.js         SVG busyness profile chart with hover/keyboard tooltip
-js/app.js           search, loading, refresh and rendering
+js/app.js           search, loading, refresh and rendering (TfL tab)
 js/demo-data.js     synthetic TfL-shaped responses for ?demo
+js/swr-stations.js  SWR stations matched to TfL stops (generated by scripts/swr-stations.js)
+js/swr-api.js       SWR / National Rail client, cache, demo routes and shared pure helpers
+js/swr-app.js       tab bar, SWR station picker and header, module lifecycle (SwrApp.register)
+js/swr-*.js         one file per SWR package, each registering with SwrApp
+scripts/            Node scripts run by hand (swr-stations.js)
 tests/              node:test unit tests
 .github/workflows/pages.yml   test on every push and PR; deploy to Pages when tests pass
 ```
