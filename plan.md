@@ -34,7 +34,7 @@ Live site: https://jinalharia.github.io/tfl-dashboard/. The Pages source is *Git
 | SWR-5 | Status by route group | ✅ Done (snapshots from S7) | S3 |
 | SWR-6 | Incident details (ticket acceptance, replacement buses) | ✅ Done (snapshots from S7) | S3 |
 | SWR-2 | Typical busyness per morning train into Waterloo | ✅ Done | S4 |
-| SWR-10 | SWR planned closures, next 14 days (investigate first) | ⬜ Not started | S5 |
+| SWR-10 | SWR planned closures, next 14 days | ✅ Done (source: National Rail's engineering works, see S5) | S5 |
 | SWR-11 | Station punctuality and cancellations | ✅ Done | S6 |
 | — | Scheduled snapshots of SWR data that browsers can't fetch directly | ✅ Done | S7 |
 
@@ -374,19 +374,37 @@ At the top of the SWR tab, in `#swr-status`.
   - Hide the section where there's no file for the station. On Waterloo itself, say it covers trains *into* Waterloo.
 - **Tests:** `seatSummary(items, day)` for sorting, the day column, the weekend fallback, and picking quieter trains near a time.
 
-### Package S5: SWR planned closures, next 14 days (item SWR-10). Investigate first.
+### Package S5: SWR planned closures, next 14 days (item SWR-10)
 
-**No working source was found on 2026-09-27.** Start with a time-boxed investigation of about 2 hours, and write the findings into this section whether or not it works.
+**Status: ✅ done.** The page reads `data/swr/closures.json`, which `scripts/swr-closures.js` builds when S7's `--status` run calls it (S7's optional hook). Until S7 publishes it, the section says closures aren't available here. Checked on 2026-09-28 in headless Chromium at 390 px, light and dark: `?demo` from disk, and a served copy with a `closures.json` from one real `snapshot()` run (25 requests, 9 SWR notices).
 
-- **Tried:**
-  - `POST https://www.southwesternrailway.com/api/overallstatus/plannedworks` with `{"StationCodes": ["5598", "5520"], "OutwardJourneyDate": "2026-10-03T10:00:00+01:00", "ReturnJourneyDate": null, "IsOpenReturn": false, "UseNlc": true, "DisplayMode": "Qtt"}` (NLC codes; the SWR website sends this before a ticket search). It returned `[]` for Waterloo–Basingstoke, Waterloo–Portsmouth Harbour and Guildford–Portsmouth Harbour on 5 dates from 28 Sep to 11 Oct.
-  - TfL `/Line/south-western-railway/Status/2026-09-27/to/2026-10-11` returned only the current `Special Service`.
-- **Still to try:**
-  - The same POST for other station pairs, on weekends further ahead, or with `DisplayMode` variations.
-  - SWR's engineering-works web pages.
-  - National Rail's `service-disruptions/*` pages, which TfL's `reason` links to.
-- **If a source works:** get it into the S7 snapshot (add a `closures.json` there, coordinating with whoever owns S7) and render it in `#swr-closures`, grouped by date, for the chosen station's routes.
-- **If none works:** leave the section hidden, record what was tried here, and mark SWR-10 "❌ No source" in the status table.
+**Investigation (2026-09-27 and 2026-09-28).** All requests by hand, 1 s or more apart, with the repo's User-Agent. The working source is **National Rail's planned engineering works**:
+
+| What | Request | Result |
+|---|---|---|
+| SWR ticket-search planned works | `POST https://www.southwesternrailway.com/api/overallstatus/plannedworks` (NLC or CRS codes, `DisplayMode` `Qtt` or `Journey`) | ❌ `[]` every time, including Waterloo–Windsor & Eton Riverside on 3 Oct, when National Rail lists buses replacing trains there |
+| TfL future status | `GET /Line/south-western-railway/Status/2026-09-27/to/2026-10-11` | ❌ only the current `Special Service` |
+| SWR engineering pages | `/plan-my-journey/planned-improvements/planned-engineering-works` (also `…/engineering-work-weekly-summary`, `…/october-2026-works`) | ❌ the calendar is a client-side widget; its config points at `swrapi.southwesternrailway.com` with the site's own API key (out of bounds). The guessed `/plan-my-journey/engineering-works` and `/engineering-works` are 404 |
+| National Rail incident page | `GET https://www.nationalrail.co.uk/service-disruptions/overton-20260327/` (TfL's `reason` link) | ⚠️ 200, a Next.js page with `__NEXT_DATA__`: one *unplanned* incident (`routesAffected`, `description` as Contentful rich text). Not a list |
+| National Rail listings | `/service-disruptions/` 404; `/status-and-disruptions/` → 307 to `/disruptions/` | ⚠️ `/disruptions/` has only operator names and "high impact alerts" |
+| **National Rail engineering works, today** | `GET https://www.nationalrail.co.uk/engineering-works/` | ✅ `__NEXT_DATA__` → `props.pageProps.data.engineeringWorks[]` `{name, slug, summary (rich text), startDateTime, endDateTime ("2026-10-03T00:00:00.000+01:00"), priority, operatorsAffectedCollection[{name, code}], sys{id, publishedAt}}` and `requestParams{date}`; 39 notices, all operators, on 28 Sep. No CORS headers |
+| **… for another day** | `?date=YYYYMMDD` (and `&operatorCode=SW`), found in the page's JS (`?date=2026-10-03` is a 404) | ⚠️ right when fetched fresh, but **Cloudflare caches the HTML without the query string** (`cf-cache-status: HIT` answered `?date=20261010` with today's list). So each listing is checked against its `requestParams.date` |
+| **… as JSON** | `GET /_next/data/{buildId}/engineering-works.json?date=YYYYMMDD` (`buildId` from today's page, `05429787` on the day) | ✅ `{pageProps}`, the same data, 75 KB instead of 260 KB, and cached **per** query string. No CORS headers |
+| **One notice** | `GET /engineering-works/{slug}-{YYYYMMDD of start}/` | ✅ `plannedIncident{summary, routesAffected, description, routeMap (a Vimeo video)}`. No station codes anywhere: stations have to be read from the text |
+
+**How it works:**
+- **`scripts/swr-closures.js`** (no dependencies; pure parsing exported for tests). `snapshot({fetchJson, fetchText, log})` makes, in order:
+  1. `GET https://jinalharia.github.io/tfl-dashboard/data/swr/closures.json`, the last published file. The status run is every 15 minutes, but works are announced weeks ahead, so a file under **6 hours** old is returned unchanged: 1 request. (`SWR_CLOSURES_PREVIOUS_URL` overrides the URL for a fork.)
+  2. Otherwise today's `/engineering-works/` page, then the `_next/data` JSON for the other 13 days (falling back to the dated HTML, and dropping any listing whose `requestParams.date` is another day), filtered to operator `SW` or `IL`.
+  3. TfL `/Line/south-western-railway/Route/Sequence/outbound` (one request), for the stations between two ends.
+  4. The notice page for each notice in the window, unless the previous file has it with the same `publishedAt`.
+  A refresh was 25 requests on the day; later refreshes only fetch new or changed notices. A failed day or notice goes in `errors`; if every listing fails, the previous file is kept.
+- **Stations** come from the text: every `SWR_STATIONS` name (also without its bracket, "Ascot (Berks)" → "Ascot", and "Waterloo"), case-sensitive whole words, longest first so "Ash Vale" isn't "Ash". For "between A / B and C" the stations in between are filled in along a track graph built from TfL's 36 route sequences, choosing the path with the smallest sum of km^1.25 per hop, so it follows stopping trains rather than a fast train's skip (Hounslow → Virginia Water: Whitton, Feltham, Ashford, Staines, Egham). TfL's sequences are messy (a "Waterloo ↔ Woking" route via Kingston), but consecutive stops are real track.
+  - `stations`: named in the title; the stretch between its ends when buses replace trains or the line is closed; and the stretch in the notice's usual first line, "Engineering work is taking place between A and B, closing all lines" (or "lines through X").
+  - `routeStations`: those, plus a "closing some / various lines" stretch, plus every station named under "routes affected" (not filled in). An amended timetable ("between London Waterloo and Exeter St Davids") isn't filled in.
+- **`js/swr-closures.js`** shows, for the chosen station, notices running on any day from today to 13 days ahead: "Includes {station}" (`stations`) first, then "Trains to or from {station}" (`routeStations`), grouped as "Happening now" and then by start date, with a label from the title (No trains, Buses replace trains, Changed timetable, Station works) in the status colours with an icon and text. Each is a collapsed card with the routes affected, National Rail's text (through `SwrApi.renderParagraphs`) and a link to the notice. Everything else on SWR is in a folded "Elsewhere on SWR". A snapshot over 12 hours old gets "May be out of date".
+- **Demo:** `SwrApi.demoRoutes` answers `data/swr/closures.json` with the real file from 2026-09-28 (notice text trimmed), moved on by whole weeks so weekend works stay on weekends.
+- **Limits:** the matching is this dashboard's heuristic and says so in "About this data"; a notice that names neither your station nor its stretch lands under "Elsewhere" (on the day, nothing named Surbiton). Island Line stations aren't in TfL's routes, so they're only ever matched by name. The site's HTML is Contentful rich text and a Next.js build; a redesign would break the parser (the run then keeps the previous file and records the error).
 
 ### Package S6: station punctuality and cancellations (item SWR-11)
 
@@ -450,9 +468,16 @@ data/swr/seats/index.json   { fetchedAt, stations: [{crs, seatName}] }
 data/swr/seats/{CRS}.json   { fetchedAt, crs, from: <seatName>, to: "London Waterloo", items: <raw Items[]> }
 data/swr/performance.json   { fetchedAt, period, target: {punctual, cancelled},
                               stations: {CRS: <raw /api/stationperformance/{name} response>} }
+data/swr/closures.json      written by S5's hook (scripts/swr-closures.js) during --status, read by S5:
+                            { format: 1, fetchedAt, source, window: {from, to} ('YYYY-MM-DD', London),
+                              errors: {name: message},
+                              items: [{ id, title, summary, from, to (ISO with the London offset),
+                                        kind: 'closed'|'buses'|'amended'|'station', operators: ['SW'…],
+                                        stations: [CRS…], routeStations: [CRS…], routes: [text],
+                                        details: [{text, parts: [{text, href?}]}], url, publishedAt }] }
 ```
 
-Raw responses are kept as they come, so the normalisers in S3, S4 and S6 can be tested against the same shapes the live API returns.
+Raw responses are kept as they come, so the normalisers in S3, S4 and S6 can be tested against the same shapes the live API returns. `closures.json` is the exception: National Rail's pages are HTML with embedded page data, so S5 keeps only what the page needs (see Package S5).
 
 ### Conventions for the SWR packages (on top of the ones below)
 

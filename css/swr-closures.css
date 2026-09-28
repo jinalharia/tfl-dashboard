@@ -1,1 +1,62 @@
-/* TODO(package S5): styles for SWR planned closures, next 14 days (SWR-10). Placeholder created by package S0; package S5 replaces this file wholesale. */
+/*
+ * SWR tab, package S5: planned closures in the next 14 days (#swr-closures).
+ * Uses the design tokens and .status pills from css/styles.css, so light and dark themes follow.
+ */
+.swr-cl-asof { margin: 0 0 8px; }
+.swr-cl-stale, .swr-cl-none { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; margin: 0 0 8px; font-size: 13px; color: var(--text-secondary); }
+.swr-cl-none { font-size: 14px; }
+.swr-cl-note { margin: 4px 0 0; max-width: 80ch; }
+.swr-cl-count { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+.swr-cl-day { font-size: 14px; margin: 16px 0 6px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; }
+
+.swr-cl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.swr-cl-item {
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+  overflow: hidden; min-width: 0;
+}
+/* The station's own closures stand out with a thicker edge; "trains to or from" ones stay plain. */
+.swr-cl-item.swr-cl-here { border-left: 5px solid var(--serious); }
+.swr-cl-item > summary {
+  display: flex; flex-direction: column; gap: 6px; padding: 10px 14px 10px calc(14px + 1em + 8px);
+  position: relative; cursor: pointer; list-style: none; min-width: 0;
+}
+.swr-cl-item > summary::-webkit-details-marker { display: none; }
+.swr-cl-item > summary::before {
+  content: "▸"; position: absolute; left: 14px; top: 12px; width: 1em; color: var(--text-muted); transition: transform 0.15s;
+}
+.swr-cl-item[open] > summary::before { transform: rotate(90deg); }
+.swr-cl-item > summary:hover { background: var(--surface-2); }
+.swr-cl-top { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; }
+.swr-cl-top .status { flex: none; }
+.swr-cl-when { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.swr-cl-tag {
+  font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 4px; border: 1px solid var(--border);
+  color: var(--text-secondary); background: var(--surface-2); overflow-wrap: anywhere;
+}
+.swr-cl-here .swr-cl-tag { color: var(--text-primary); border-color: currentColor; }
+.swr-cl-title { font-size: 14px; font-weight: 600; overflow-wrap: break-word; }
+.swr-cl-body { padding: 0 14px 12px calc(14px + 1em + 8px); max-width: 90ch; }
+.swr-cl-body p { margin: 6px 0 0; font-size: 13px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.swr-cl-more { margin: 12px 0 0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+#swr-closures a { color: var(--accent); text-underline-offset: 2px; overflow-wrap: anywhere; }
+
+.swr-cl-elsewhere { margin-top: 16px; }
+.swr-cl-elsewhere > summary {
+  cursor: pointer; padding: 8px 14px; margin-bottom: 8px; font-size: 14px; font-weight: 600;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-1);
+}
+.swr-cl-elsewhere > summary:hover { background: var(--surface-2); }
+
+.swr-cl-about { margin-top: 20px; }
+.swr-cl-about summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); }
+.swr-cl-about ul { margin: 8px 0; padding-left: 18px; font-size: 13px; color: var(--text-secondary); max-width: 90ch; }
+.swr-cl-about li { margin-bottom: 6px; overflow-wrap: anywhere; }
+
+@media (max-width: 640px) {
+  .swr-cl-item > summary { padding: 10px 12px 10px calc(12px + 1em + 6px); }
+  .swr-cl-item > summary::before { left: 12px; }
+  .swr-cl-body { padding: 0 12px 12px 12px; }
+}
+@media (forced-colors: active) {
+  .swr-cl-item.swr-cl-here { border-left-color: CanvasText; }
+}
