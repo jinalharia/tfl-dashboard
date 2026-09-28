@@ -1,1 +1,87 @@
-/* TODO(package S3): styles for SWR service status (SWR-4, SWR-5, SWR-6). Placeholder created by package S0; package S3 replaces this file wholesale. */
+/* ---------- SWR tab: service status (package S3, #swr-status) ---------- */
+#swr-status { min-width: 0; }
+#swr-status .section-title { margin-top: 8px; }
+.swr-st-headline { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.swr-st-headline .card-title { margin-bottom: 0; }
+.swr-st-headrow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+.swr-st-src { font-size: 12px; color: var(--text-secondary); }
+.swr-st-reason { margin: 0; font-size: 13px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.swr-st-sub { font-size: 15px; margin: 20px 0 4px; }
+.swr-st-asof { margin: 0 0 8px; }
+.swr-st-stale { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; margin: 0 0 8px; font-size: 13px; color: var(--text-secondary); }
+.swr-st-nosnap { margin: 12px 0 0; max-width: 80ch; }
+
+#swr-status a { color: var(--accent); text-underline-offset: 2px; overflow-wrap: anywhere; }
+
+/* Route groups: one row each, worst first; open one to see its services by direction. */
+.swr-st-groups, .swr-st-incidents, .swr-st-messages, .swr-st-rows { list-style: none; margin: 0; padding: 0; }
+.swr-st-groups {
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.swr-st-groups > li + li { border-top: 1px solid var(--gridline); }
+
+/* The whole list folds into one line (counts per status) once a station is chosen. */
+.swr-st-routes > summary {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; cursor: pointer; list-style: none;
+  padding: 8px 14px; margin-bottom: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-1);
+}
+.swr-st-routes > summary::-webkit-details-marker { display: none; }
+.swr-st-routes > summary::before { content: "▸"; flex: none; width: 1em; color: var(--text-muted); transition: transform 0.15s; }
+.swr-st-routes[open] > summary::before { transform: rotate(90deg); }
+.swr-st-routes > summary:hover { background: var(--surface-2); }
+.swr-st-routes-count { font-size: 14px; font-weight: 600; flex: 1 1 14em; min-width: 0; }
+.swr-st-routes > summary .swr-st-hint { flex: 1 1 100%; }
+.swr-st-group > summary, .swr-st-ghead, .swr-st-incident > summary {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 10px 14px; min-width: 0;
+}
+.swr-st-group > summary, .swr-st-incident > summary { cursor: pointer; list-style: none; }
+.swr-st-group > summary::-webkit-details-marker, .swr-st-incident > summary::-webkit-details-marker { display: none; }
+/* Our own disclosure arrow, so it sits at the start of a wrapping flex row. */
+.swr-st-group > summary::before, .swr-st-incident > summary::before {
+  content: "▸"; flex: none; width: 1em; color: var(--text-muted); transition: transform 0.15s;
+}
+.swr-st-group[open] > summary::before, .swr-st-incident[open] > summary::before { transform: rotate(90deg); }
+.swr-st-ghead { padding-left: calc(14px + 1em + 10px); }
+.swr-st-group .status, .swr-st-incident > summary .status, .swr-st-rowtop .status { flex: none; }
+.swr-st-group > summary:hover, .swr-st-incident > summary:hover { background: var(--surface-2); }
+.swr-st-gname { font-weight: 600; font-size: 14px; flex: 1 1 8em; min-width: 0; overflow-wrap: break-word; }
+.swr-st-hint { font-size: 12px; color: var(--text-secondary); flex: 1 1 100%; padding-left: calc(1em + 10px); }
+.swr-st-ghead .swr-st-hint { padding-left: 0; }
+.swr-st-rows { padding: 0 14px 10px calc(14px + 1em + 10px); }
+.swr-st-row { padding: 6px 0; border-top: 1px solid var(--gridline); }
+.swr-st-rowtop { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+.swr-st-dir { font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+.status.swr-st-small { font-size: 11px; padding: 1px 7px; font-weight: 600; }
+.swr-st-incident-text { margin: 4px 0 0; font-size: 13px; color: var(--text-secondary); overflow-wrap: anywhere; }
+
+/* Incidents: one collapsed card each. */
+.swr-st-incidents { display: flex; flex-direction: column; gap: 8px; }
+.swr-st-incident { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.swr-st-isum { font-weight: 600; font-size: 14px; flex: 1 1 12em; min-width: 0; overflow-wrap: break-word; }
+.swr-st-body { padding: 0 14px 12px calc(14px + 1em + 10px); max-width: 90ch; }
+.swr-st-body p, .swr-st-message p { margin: 8px 0 0; font-size: 13px; overflow-wrap: anywhere; }
+.swr-st-body p { color: var(--text-secondary); }
+.swr-st-more { margin: 12px 0 0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+
+/* National Rail station messages (Huxley2). */
+.swr-st-messages { display: flex; flex-direction: column; gap: 8px; }
+.swr-st-message {
+  padding: 2px 12px 10px; border-radius: 8px; background: var(--surface-2); border-left: 3px solid var(--warning); max-width: 90ch;
+}
+
+.swr-st-about { margin-top: 20px; }
+.swr-st-about summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); }
+.swr-st-about ul { margin: 8px 0; padding-left: 18px; font-size: 13px; color: var(--text-secondary); max-width: 90ch; }
+.swr-st-about li { margin-bottom: 6px; overflow-wrap: anywhere; }
+
+@media (max-width: 640px) {
+  .swr-st-group > summary, .swr-st-ghead, .swr-st-incident > summary { padding: 10px 12px; }
+  .swr-st-rows { padding: 0 12px 10px 12px; }
+  .swr-st-body { padding: 0 12px 12px 12px; }
+  .swr-st-hint { padding-left: 0; }
+  .swr-st-ghead { padding-left: 12px; }
+}
+@media (forced-colors: active) {
+  .swr-st-message { border-left-color: CanvasText; }
+}
