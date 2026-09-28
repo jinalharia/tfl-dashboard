@@ -35,7 +35,7 @@ Live site: https://jinalharia.github.io/tfl-dashboard/. Until the repo owner swi
 | SWR-6 | Incident details (ticket acceptance, replacement buses) | ✅ Done; waiting for S7 snapshots in production | S3 |
 | SWR-2 | Typical busyness per morning train into Waterloo | ⬜ Not started | S4 |
 | SWR-10 | SWR planned closures, next 14 days (investigate first) | ⬜ Not started | S5 |
-| SWR-11 | Station punctuality and cancellations | ⬜ Not started | S6 |
+| SWR-11 | Station punctuality and cancellations | ✅ Done; waiting for S7's `performance.json` in production | S6 |
 | — | Scheduled snapshots of SWR data that browsers can't fetch directly | ⬜ Not started | S7 |
 
 **Note on #1.** The proposal was "entry/exit footfall", but TfL's `passengerFlows` are about 10 *unlabelled* values per 15-minute slice, so they can't be split into entries and exits. What shipped is **typical passenger flow per line**: the per-slice sum, charted on each line card. TfL gives one profile for all days and it follows a weekday pattern, so the card says so at weekends.
@@ -382,9 +382,22 @@ At the top of the SWR tab, in `#swr-status`.
 
 ### Package S6: station punctuality and cancellations (item SWR-11)
 
+**Status: ✅ done.** It waits for S7's `data/swr/performance.json` in production; until then the section says the figures aren't available here. Notes from building it (checked on 2026-09-28 in headless Chromium at 390 px and 1280 px, light and dark: `?demo` from disk, plain from disk, and a served copy with a hand-made `performance.json` from real responses for SUR, WAT, CLJ, WOK and BRS):
+- **Files:** `js/swr-performance.js` (pure helpers exported for Node, a renderer, the demo route, the module), `css/swr-performance.css`, `tests/swr-performance.test.js`.
+- **What "Punctal" means,** from SWR's station performance page (`/travelling-with-us/performance/station-performance`): "Punctuality is the percentage of trains that arrived within 3 minutes of the scheduled time. Cancelled means the percentage of trains that were scheduled to but did not call at this station. This does not include station calls removed from the plan prior to 2200 the day before." Quoted in the section's "About this data"; the tile says "On time".
+- **Real quirks:**
+  - Clapham Junction has one row per operator (`TOC` "Arriva London", "GTR", "SWR"). The SWR row is used and the others are listed under the tiles.
+  - Berrylands has `"0.00"`/`"0.00"`, a blank rather than a perfect record, so all-zero rows count as no data and the section hides.
+  - The "Wessex route target" row has `CRSCode: ""`, and was the same (86.12 / 3.68) for every station fetched.
+- **Target:** the snapshot's `target` wins, field by field, over the response's own "Wessex route target" row. Numbers are accepted as strings or numbers; anything that isn't 0–100 is treated as missing.
+- **Better or worse:** the difference is rounded to 0.1 percentage points; 0.0 is "On target". Lower is better for cancellations, and the tile says so. Better is green ✓, worse amber !, always with the words.
+- **Showing and hiding:** hidden until the snapshot has loaded, and for a station with no entry, no row or only blank figures (the snapshot covers SWR's 171 names, not all 204 stations). With no snapshot (from disk, or before S7), it shows a short "not available here" note, as the S0 contract asks. A snapshot older than 15 days gets a "May be out of date" pill.
+- **Refresh:** the file is weekly and `SwrApi.snapshot` caches it for 60 s, so `refresh` costs at most one small request a minute. The HTML is replaced only when it changes, and open `<details>` stay open.
+- **Demo:** `SwrApi.demoRoutes` answers `data/swr/performance.json` with real rows for WAT, CLJ, SUR, WOK and BRS and made-up ones for GLD, WIM, RMD and VXH, fetched "last Monday 05:17 UTC".
+
 - **Data:** `SwrApi.snapshot('performance.json')`, written weekly by S7. Source: `GET /api/stationperformance/{name}?skip=0&take=10` → `{Items[{StationName, CRSCode, Punctal: "85.00", Cancelled: "3.90"}, {StationName: "Wessex route target", Punctal: "86.12", Cancelled: "3.68"}], Period: "4-Week Period from 26 July to 22 August", Next3MonthPlan, NextYearPlan, LongTermPlan}`. There are 171 station names from `/api/stationperformance/GetStations`.
 - **Show:** two stat tiles, "On time %" and "Cancelled %", each compared with the route target (better or worse, in words), plus the period. The three "plan" texts go in a collapsed `<details>`. Label it clearly as a past 4-week period, not live.
-- **Tests:** `performanceSummary(raw)` for parsing the strings to numbers, picking the target row, better or worse than target, and missing values.
+- **Tests:** `performanceSummary(raw, target, crs)` for parsing the strings to numbers, picking the station's SWR row and the target row, better or worse than target, missing and odd values, all-zero rows, and a station with no row.
 
 ### Package S7: scheduled snapshots of the SWR website API
 
