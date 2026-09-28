@@ -33,7 +33,7 @@ Live site: https://jinalharia.github.io/tfl-dashboard/. Until the repo owner swi
 | SWR-4 | SWR overall status (headline) | ✅ Done | S3 |
 | SWR-5 | Status by route group | ✅ Done; waiting for S7 snapshots in production | S3 |
 | SWR-6 | Incident details (ticket acceptance, replacement buses) | ✅ Done; waiting for S7 snapshots in production | S3 |
-| SWR-2 | Typical busyness per morning train into Waterloo | ⬜ Not started | S4 |
+| SWR-2 | Typical busyness per morning train into Waterloo | ✅ Done; waiting for S7 snapshots in production | S4 |
 | SWR-10 | SWR planned closures, next 14 days (investigate first) | ⬜ Not started | S5 |
 | SWR-11 | Station punctuality and cancellations | ⬜ Not started | S6 |
 | — | Scheduled snapshots of SWR data that browsers can't fetch directly | ⬜ Not started | S7 |
@@ -354,6 +354,16 @@ At the top of the SWR tab, in `#swr-status`.
 - **Tests:** normalisers for all three snapshot parts and for `nrccMessages`, using the samples above.
 
 ### Package S4: typical busyness per morning train into Waterloo (item SWR-2)
+
+**Status: ✅ done.** It waits for S7's `data/swr/seats/*.json` in production. Notes from building it (checked on 2026-09-28 in headless Chromium at 390 px and 1100 px, light and dark: `?demo` for WOK, SUR, GLD, WIM, WAT and BRS; a served copy with a hand-made `seats/WOK.json` built from the real Woking response; and from disk without `?demo`):
+- **What the colours mean**, in SWR's words: the labels on its [How busy is my train?](https://www.southwesternrailway.com/plan-my-journey/how-busy-is-my-train) page come from its stylesheet `/Assets/css/seatAvailabilityCheckerResult.css`: `colorGreen` "Seats available", `colorAmber` "Some seats available", `colorRed` "Standing room only", **`colorVeryRed` "Full to capacity"** (a fourth level: 9 of Woking's 215 day values), and an empty value "No Service". The page says the guide shows "how busy your train is likely to be on a typical weekday morning", covers trains "Arriving before 10:00 AM", and is based on "averages of how busy your train has been between 23 April to 8 May" (that period is only in the page's HTML, not in the API).
+- **Odd values:** `JourneyDuration` is a 12-hour clock time (`"12:34:00 AM"`) that doesn't even match the times (06:28 → 07:04 is 36 minutes), so the journey time comes from `Departure`/`Arrival`. `Via` is `"-"` for none. `*_TrainName` is `"Arterio"` or `""`, per day. A level SWR hasn't used before shows its own text in grey.
+- **Show:** a table of trains (departs → arrives, journey time, coaches, train type) with a Mon–Fri chip per train: tinted by level, with the TfL tab's pips (1–4) and a short label ("Seats", "Some seats" (just "Some" on phones), "Standing", "Full", "No train"). Screen readers get "Tuesday: Full to capacity". A key gives SWR's full wording. Today's column is highlighted (Monday at weekends, with a note), and a Day picker changes it. On phones the table turns into one row per train with the five chips underneath.
+- **Quieter picks:** Green trains first, then Amber, nearest to the "Arrive at Waterloo by" time (`swr.arriveBy`, default 09:00, `<input type="time">`), arriving at most an hour before it. If there are none, it takes the nearest ones up to an hour after it, and says so. If the last train arriving by that time is Red or VeryRed, it says so. The picks are tagged "Quieter pick" in the table. The table shows trains arriving from an hour before the time to 15 minutes after it, with "Show all N trains". Woking's 43 rows would be about 4000 px on a phone.
+- **Hiding:** at Waterloo it explains that the guide covers trains *into* Waterloo. When `seats/{CRS}.json` is missing, S4 reads `seats/index.json`. If the index loads (S7 is publishing), the station just isn't covered, so the section stays hidden. If it doesn't load (opened from disk, or before S7), the section says it isn't available here. A file with no items is hidden too.
+- **Refresh:** `refresh()` calls `SwrApi.snapshot()` again (cached 60 s). It re-renders only when `fetchedAt` or the day has changed, so a refresh doesn't take focus from the controls. Changing the time or day re-renders only the hint and the table. A failed refresh keeps the last good copy. The "as of" line shows `fetchedAt`, with "May be out of date" after 15 days.
+- **Demo:** `SwrSeats.demoRoute` answers `data/swr/seats/{CRS}.json` for WOK, SUR, GLD, WIM, CLJ, RMD and VXH. These are synthetic, deterministic trains with the real `Items` shape, all arriving before 10:00, and fetched "last Monday 05:17 UTC". It also answers `seats/index.json` listing them, so any other station is hidden in demo too.
+- **Pure helpers** (exported for tests): `seatSummary(items, day, now)`, `quieterTrains(summary, arriveBy, {limit, windowMins})`, `visibleRows`, `resolveDay` (London time, weekend → Monday), `normalizeLevel`, `normalizeSeatItem`, `durationMinutes`, `normalizeSeatFile`, `indexHasStation`, `seatsAge`, and `renderSeats`/`renderBody`, which return HTML strings so the escaping is tested in Node.
 
 **Question:** which morning train from my station is usually least crowded?
 

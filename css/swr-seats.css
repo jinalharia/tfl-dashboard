@@ -1,1 +1,110 @@
-/* TODO(package S4): styles for typical busyness per morning train into Waterloo (SWR-2). Placeholder created by package S0; package S4 replaces this file wholesale. */
+/* ---------- SWR tab, package S4: typical busyness of morning trains into Waterloo (#swr-seats) ---------- */
+/* Uses the tokens and the .level / .pips / .status / .card / .section-title classes from styles.css. */
+
+#swr-seats { min-width: 0; }
+#swr-seats .section-sub { margin-bottom: 10px; }
+#swr-seats a { color: var(--accent); text-underline-offset: 2px; }
+.swr-seat-note { margin: 0; font-size: 14px; max-width: 80ch; color: var(--text-secondary); }
+.swr-seat-stale { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; margin: 0 0 10px; }
+
+/* Day and arrival time. */
+.swr-seat-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; margin: 0 0 12px; }
+.swr-seat-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.swr-seat-field select, .swr-seat-field input {
+  font: inherit; font-size: 14px; font-weight: 400; min-height: 36px; padding: 6px 8px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary);
+}
+
+/* Quieter trains near the chosen time. */
+.swr-seat-hint { padding: 12px 16px; margin: 0 0 12px; max-width: 720px; }
+.swr-seat-hint-head { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+.swr-seat-picks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.swr-seat-picks li {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 12px;
+  padding-top: 6px; border-top: 1px solid var(--gridline); font-size: 13px;
+}
+.swr-seat-picks li:first-child { padding-top: 0; border-top: 0; }
+.swr-seat-hint-train strong { font-size: 15px; font-variant-numeric: tabular-nums; margin-right: 4px; }
+.swr-seat-latest { margin: 8px 0 0; color: var(--text-secondary); }
+.swr-seat-weekend { margin: 0 0 8px; }
+
+/* Levels: status colour + pips + text. */
+.swr-seat-lv { font-size: 12px; gap: 6px; }
+.swr-seat-nopips { color: var(--text-muted); font-weight: 700; }
+.swr-seat-legend { list-style: none; display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 8px; padding: 0; }
+.swr-seat-range { margin: 0 0 8px; }
+.swr-seat-range .link { margin-left: 4px; font-size: 13px; }
+
+/* The table: one row per train, one chip per weekday. */
+.swr-seat-table {
+  width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.swr-seat-table th, .swr-seat-table td { padding: 6px 6px; border-top: 1px solid var(--gridline); text-align: left; vertical-align: middle; }
+.swr-seat-table thead th { border-top: 0; font-size: 12px; font-weight: 600; color: var(--text-secondary); padding-top: 10px; }
+.swr-seat-table thead abbr { text-decoration: none; }
+.swr-seat-trainh, .swr-seat-train { padding-left: 14px !important; }
+.swr-seat-dayh { text-align: center !important; width: 13%; }
+.swr-seat-dayh.is-day { color: var(--text-primary); box-shadow: inset 0 -3px 0 var(--accent); }
+.swr-seat-today { display: block; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); }
+.swr-seat-train { font-weight: 400; min-width: 0; }
+.swr-seat-times { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.swr-seat-meta { display: block; font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.swr-seat-tag {
+  display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; border: 1px solid var(--good);
+  font-size: 11px; font-weight: 600; color: var(--good-text); white-space: nowrap; vertical-align: 1px;
+}
+.swr-seat-table tr.is-pick .swr-seat-train { box-shadow: inset 3px 0 0 var(--good); }
+td.swr-seat-day.is-day { background: var(--surface-2); }
+
+.swr-seat-chip {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  width: 100%; min-height: 38px; padding: 4px 3px; border-radius: 6px; border: 1px solid transparent;
+  font-size: 11px; font-weight: 600; line-height: 1.15; text-align: center; background: var(--surface-2);
+}
+.swr-seat-chip .pip { width: 4px; height: 10px; }
+.swr-seat-chip-top { display: inline-flex; align-items: center; gap: 4px; }
+.swr-seat-dname { display: none; font-size: 10px; font-weight: 700; color: var(--text-secondary); }
+.swr-seat-tiny { display: none; }
+.swr-seat-chip.level-quiet { background: color-mix(in srgb, var(--good) 16%, var(--surface-1)); }
+.swr-seat-chip.level-moderate { background: color-mix(in srgb, var(--warning) 22%, var(--surface-1)); }
+.swr-seat-chip.level-busy { background: color-mix(in srgb, var(--serious) 26%, var(--surface-1)); }
+.swr-seat-chip.level-very-busy { background: color-mix(in srgb, var(--critical) 26%, var(--surface-1)); }
+.swr-seat-chip.level-none, .swr-seat-chip.level-unknown { color: var(--text-secondary); font-weight: 500; }
+.is-day .swr-seat-chip { border-color: var(--axis); }
+
+.swr-seat-about { margin-top: 12px; }
+.swr-seat-about summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); }
+.swr-seat-about ul { margin: 8px 0; padding-left: 18px; font-size: 13px; color: var(--text-secondary); max-width: 90ch; }
+.swr-seat-about li { margin-bottom: 6px; overflow-wrap: anywhere; }
+
+/* Narrow screens: each train is a card-like row, times on top and the five days in a row below. */
+@media (max-width: 560px) {
+  .swr-seat-table, .swr-seat-table tbody { display: block; }
+  .swr-seat-table thead { display: none; }
+  .swr-seat-table tr {
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px 4px;
+    padding: 8px 10px; border-top: 1px solid var(--gridline);
+  }
+  .swr-seat-table tbody tr:first-child { border-top: 0; }
+  .swr-seat-table th, .swr-seat-table td { display: block; padding: 0 !important; border: 0; }
+  .swr-seat-train { grid-column: 1 / -1; display: flex !important; flex-wrap: wrap; align-items: baseline; gap: 0 8px; }
+  .swr-seat-meta { display: inline; }
+  .swr-seat-tag { margin-left: 0; }
+  .swr-seat-long { display: none; }
+  .swr-seat-tiny { display: inline; }
+  .swr-seat-chip { min-height: 34px; padding: 3px 2px; }
+  .swr-seat-table tr.is-pick .swr-seat-train { box-shadow: none; }
+  .swr-seat-table tr.is-pick { box-shadow: inset 3px 0 0 var(--good); }
+  td.swr-seat-day.is-day { background: none; }
+  .is-day .swr-seat-chip { border-color: var(--accent); border-width: 2px; padding: 3px 2px; }
+  .is-day .swr-seat-dname { color: var(--text-primary); text-decoration: underline; text-underline-offset: 2px; }
+  .swr-seat-dname { display: inline; }
+  .swr-seat-picks li { font-size: 12px; }
+}
+
+@media (forced-colors: active) {
+  .swr-seat-chip { border-color: CanvasText; }
+  .is-day .swr-seat-chip { border-width: 3px; }
+  .swr-seat-table tr.is-pick .swr-seat-train, .swr-seat-table tr.is-pick { box-shadow: none; }
+}
