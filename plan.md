@@ -382,14 +382,15 @@ At the top of the SWR tab, in `#swr-status`.
 
 ### Package S6: station punctuality and cancellations (item SWR-11)
 
-**Status: ✅ done.** It waits for S7's `data/swr/performance.json` in production; until then the section says the figures aren't available here. Notes from building it (checked on 2026-09-28 in headless Chromium at 390 px and 1280 px, light and dark: `?demo` from disk, plain from disk, and a served copy with a hand-made `performance.json` from real responses for SUR, WAT, CLJ, WOK and BRS):
+**Status: ✅ done.** It waits for S7's `data/swr/performance.json` in production; until then the section says the figures aren't available here. Notes from building it (checked on 2026-09-28 in headless Chromium at 390 px and 1280 px, light and dark: `?demo` from disk, plain from disk, and a served copy of S7's real `performance.json` from its crawl on 2026-09-28, 171 stations):
 - **Files:** `js/swr-performance.js` (pure helpers exported for Node, a renderer, the demo route, the module), `css/swr-performance.css`, `tests/swr-performance.test.js`.
 - **What "Punctal" means,** from SWR's station performance page (`/travelling-with-us/performance/station-performance`): "Punctuality is the percentage of trains that arrived within 3 minutes of the scheduled time. Cancelled means the percentage of trains that were scheduled to but did not call at this station. This does not include station calls removed from the plan prior to 2200 the day before." Quoted in the section's "About this data"; the tile says "On time".
 - **Real quirks:**
-  - Clapham Junction has one row per operator (`TOC` "Arriva London", "GTR", "SWR"). The SWR row is used and the others are listed under the tiles.
-  - Berrylands has `"0.00"`/`"0.00"`, a blank rather than a perfect record, so all-zero rows count as no data and the section hides.
+  - 38 shared stations have one row per operator (Clapham Junction: `TOC` "Arriva London", "GTR", "SWR"; Reading: GWR, CrossCountry, SWR). The SWR row is used and the others are listed under the tiles. Without an SWR row, the first row with figures is used and named.
+  - `CRSCode` is wrong in some responses (Farnham `FCH`, Reading `RDZ`, Templecombe `SMC`), so rows are never matched on it: every non-target row belongs to the station the response was fetched for, which is the snapshot's key (S7's name-to-CRS match).
+  - Berrylands has `"0.00"`/`"0.00"`, a blank rather than a perfect record, so all-zero rows count as no data and the section hides. In S7's file that's the only one of the 171 stations without figures.
   - The "Wessex route target" row has `CRSCode: ""`, and was the same (86.12 / 3.68) for every station fetched.
-- **Target:** the snapshot's `target` wins, field by field, over the response's own "Wessex route target" row. Numbers are accepted as strings or numbers; anything that isn't 0–100 is treated as missing.
+- **Target:** the snapshot's `target` (numbers, from S7) wins, field by field, over the response's own "Wessex route target" row. Numbers are accepted as strings or numbers; anything that isn't 0–100 is treated as missing. S7's optional `errors` object is ignored.
 - **Better or worse:** the difference is rounded to 0.1 percentage points; 0.0 is "On target". Lower is better for cancellations, and the tile says so. Better is green ✓, worse amber !, always with the words.
 - **Showing and hiding:** hidden until the snapshot has loaded, and for a station with no entry, no row or only blank figures (the snapshot covers SWR's 171 names, not all 204 stations). With no snapshot (from disk, or before S7), it shows a short "not available here" note, as the S0 contract asks. A snapshot older than 15 days gets a "May be out of date" pill.
 - **Refresh:** the file is weekly and `SwrApi.snapshot` caches it for 60 s, so `refresh` costs at most one small request a minute. The HTML is replaced only when it changes, and open `<details>` stay open.

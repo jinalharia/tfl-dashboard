@@ -57,12 +57,34 @@ const BERRYLANDS = {
   WessexRouteData: '',
 };
 
-// data/swr/performance.json as package S7 writes it (plan.md "Snapshot file formats")
+// data/swr/performance.json from S7's crawl (branch swr-s7, fetchedAt 2026-09-28T04:55Z), stations FNH and RDG.
+// Both carry the wrong CRSCode (FCH, RDZ): S7 keys stations by the code it matched from the name.
+const FARNHAM = {
+  TotalResults: 2,
+  Items: [{ Id: 77, StationName: 'Farnham', CRSCode: 'FCH', TOC: 'SWR', Punctal: '75.80', Cancelled: '3.50' }, TARGET_ROW],
+  Period: '4-Week Period from 26 July to 22 August',
+  ...PLANS,
+  WessexRouteData: '',
+};
+const READING = {
+  TotalResults: 4,
+  Items: [
+    { Id: 148, StationName: 'Reading', CRSCode: 'RDZ', TOC: 'GWR', Punctal: '64.90', Cancelled: '5.10' },
+    { Id: 149, StationName: 'Reading', CRSCode: 'RDZ', TOC: 'CrossCountry', Punctal: '48.50', Cancelled: '6.30' },
+    { Id: 150, StationName: 'Reading', CRSCode: 'RDZ', TOC: 'SWR', Punctal: '87.00', Cancelled: '1.50' },
+    TARGET_ROW,
+  ],
+  Period: '4-Week Period from 26 July to 22 August',
+  ...PLANS,
+  WessexRouteData: '',
+};
+
+// data/swr/performance.json as package S7 writes it (plan.md "Snapshot file formats"; S7's target has numbers)
 const SNAPSHOT = {
   fetchedAt: '2026-09-28T05:17:42.000Z',
   period: '4-Week Period from 26 July to 22 August',
-  target: { punctual: '86.12', cancelled: '3.68' },
-  stations: { SUR: SURBITON, WAT: WATERLOO, CLJ: CLAPHAM, BRS: BERRYLANDS },
+  target: { punctual: 86.12, cancelled: 3.68 },
+  stations: { SUR: SURBITON, WAT: WATERLOO, CLJ: CLAPHAM, BRS: BERRYLANDS, FNH: FARNHAM, RDG: READING },
 };
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -96,14 +118,42 @@ test('isTargetRow picks out the "Wessex route target" row', () => {
 });
 
 test('pickStationRows prefers the SWR row and lists other operators', () => {
-  const { row, others } = P.pickStationRows(CLAPHAM.Items, 'clj');
+  const { row, others } = P.pickStationRows(CLAPHAM.Items);
   assert.equal(row.TOC, 'SWR');
   assert.deepEqual(others.map((o) => o.TOC), ['Arriva London', 'GTR']);
-  assert.equal(P.pickStationRows(SURBITON.Items, 'WAT').row, null, 'a row for another station is not used');
-  assert.equal(P.pickStationRows([TARGET_ROW], 'SUR').row, null);
-  assert.equal(P.pickStationRows(undefined, 'SUR').row, null);
-  // Without a CRS, the first non-target row.
-  assert.equal(P.pickStationRows(SURBITON.Items).row.CRSCode, 'SUR');
+  assert.equal(P.pickStationRows(READING.Items).row.Id, 150, 'SWR row even when it comes last');
+  assert.equal(P.pickStationRows(FARNHAM.Items).row.Id, 77, 'CRSCode is not matched (Farnham says FCH)');
+  assert.equal(P.pickStationRows([TARGET_ROW]).row, null);
+  assert.equal(P.pickStationRows(undefined).row, null);
+});
+
+test('pickStationRows without an SWR row: the first row with figures', () => {
+  const items = [
+    { StationName: 'X', CRSCode: 'XXX', TOC: 'GWR', Punctal: '0.00', Cancelled: '0.00' },
+    { StationName: 'X', CRSCode: 'XXX', TOC: 'CrossCountry', Punctal: '48.50', Cancelled: '6.30' },
+    TARGET_ROW,
+  ];
+  assert.equal(P.pickStationRows(items).row.TOC, 'CrossCountry');
+  assert.equal(P.pickStationRows([items[0], TARGET_ROW]).row.TOC, 'GWR', 'else the first row');
+  const s = P.performanceSummary({ Items: items, Period: READING.Period }, SNAPSHOT.target, 'XXX');
+  assert.equal(s.hasData, true);
+  assert.equal(s.station.toc, 'CrossCountry');
+  assert.deepEqual(s.others, [], 'the all-zero GWR row is not listed');
+  const { html } = P.renderPerformance({ station: { crs: 'XXX', name: 'X' }, snapshot: { ...SNAPSHOT, stations: { XXX: { Items: [...items, { StationName: 'X', TOC: 'GTR', Punctal: '80.00', Cancelled: '2.00' }] } } }, loaded: true }, NOW);
+  assert.match(html, /These figures are for CrossCountry\. SWR also lists other operators here: GTR 80\.0% on time/);
+});
+
+test('performanceSummary: the snapshot key wins over a wrong CRSCode', () => {
+  const f = P.summaryFromSnapshot(SNAPSHOT, 'FNH');
+  assert.equal(f.hasData, true);
+  assert.deepEqual(f.station, { name: 'Farnham', crs: 'FNH', toc: 'SWR' });
+  assert.equal(f.punctual.value, 75.8);
+  const r = P.summaryFromSnapshot(SNAPSHOT, 'RDG');
+  assert.equal(r.station.crs, 'RDG');
+  assert.equal(r.punctual.value, 87);
+  assert.equal(r.punctual.verdict, 'better');
+  assert.equal(r.cancelled.verdict, 'better');
+  assert.deepEqual(r.others, [{ toc: 'GWR', punctual: 64.9, cancelled: 5.1 }, { toc: 'CrossCountry', punctual: 48.5, cancelled: 6.3 }]);
 });
 
 test('periodText tidies SWR\'s period', () => {
@@ -229,7 +279,6 @@ test('performanceSummary: a station with no row, and unusable responses', () => 
   assert.equal(s.hasData, false);
   assert.equal(s.reason, 'no-row');
   assert.equal(s.station, null);
-  assert.equal(P.performanceSummary(SURBITON, SNAPSHOT.target, 'WAT').reason, 'no-row');
   for (const bad of [null, undefined, 'oops', 42]) assert.equal(P.performanceSummary(bad, SNAPSHOT.target, 'SUR').reason, 'no-response');
   assert.equal(P.performanceSummary({ Items: 'x' }, null, 'SUR').reason, 'no-row');
 });
@@ -246,6 +295,10 @@ test('stationEntry and summaryFromSnapshot read S7\'s file', () => {
   const s = P.summaryFromSnapshot({ ...SNAPSHOT, stations: { SUR: raw } }, 'SUR');
   assert.equal(s.period, '4-week period from 26 July to 22 August', 'falls back to the file\'s period');
   assert.equal(P.summaryFromSnapshot(SNAPSHOT, 'GLD').reason, 'no-response');
+  // S7's optional errors object doesn't matter.
+  assert.equal(P.summaryFromSnapshot({ ...SNAPSHOT, errors: { 'stationperformance/Foo': 'HTTP 500' } }, 'SUR').hasData, true);
+  // String targets (the API's own form) work as well as S7's numbers.
+  assert.equal(P.summaryFromSnapshot({ ...SNAPSHOT, target: { punctual: '86.12', cancelled: '3.68' } }, 'SUR').punctual.target, 86.12);
 });
 
 test('verdictWords says better or worse in words, lower is better for cancellations', () => {

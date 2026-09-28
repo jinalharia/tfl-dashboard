@@ -15,9 +15,12 @@
  * were scheduled to but did not call at this station. This does not include station calls removed from the
  * plan prior to 2200 the day before."
  *
- * Real quirks (2026-09-27/28): numbers arrive as strings; Clapham Junction has one row per operator (Arriva
- * London, GTR, SWR), so the SWR row is picked and the others listed; Berrylands has "0.00"/"0.00", which is
- * a blank, not a perfect record. Every API string is escaped with esc().
+ * Real quirks (2026-09-27/28): numbers arrive as strings (S7's `target` has numbers); 38 shared stations
+ * have one row per operator (Clapham Junction: Arriva London, GTR, SWR), so the SWR row is picked and the
+ * others listed; Berrylands has "0.00"/"0.00", which is a blank, not a perfect record; and a few responses
+ * carry the wrong CRSCode (Farnham FCH, Reading RDZ, Templecombe SMC), so the station is found by the
+ * snapshot's key (S7 matches SWR's names to codes) and CRSCode is never used. S7's optional top-level
+ * `errors` is ignored. Every API string is escaped with esc().
  *
  * Classic script; the pure helpers are also exported for Node tests.
  */
@@ -59,16 +62,22 @@
   const isSwrToc = (toc) => /^(swr|sw|south western railway)$/i.test(clean(toc));
 
   /**
-   * Items[] → {row, others}: the station's SWR row (else its first row) and the other operators' rows.
-   * Rows are matched on CRSCode when `crs` is given; target rows never count.
+   * A row's two figures, parsed. SWR spells the field "Punctal"; "Punctual" is accepted too.
    */
-  function pickStationRows(items, crs) {
-    const list = Array.isArray(items) ? items.filter((i) => i && typeof i === 'object' && !isTargetRow(i)) : [];
-    const want = clean(crs).toUpperCase();
-    const rows = want ? list.filter((i) => clean(i.CRSCode).toUpperCase() === want) : list;
-    const pool = rows.length ? rows : want ? list.filter((i) => !clean(i.CRSCode)) : [];
+  const rowFigures = (r) => ({ punctual: parsePercent(r.Punctal ?? r.Punctual), cancelled: parsePercent(r.Cancelled) });
+  /** No usable figure, or SWR's all-zero placeholder (0% on time and 0% cancelled can't both be real). */
+  const isBlank = (f) => (f.punctual === null && f.cancelled === null) || (f.punctual === 0 && f.cancelled === 0);
+
+  /**
+   * Items[] → {row, others}: the SWR row (else the first row with figures, else the first row) and the other
+   * operators' rows. Every non-target row in a response belongs to the station it was fetched for, so rows
+   * are NOT matched on CRSCode: SWR gets it wrong for some stations (Farnham says FCH, Reading RDZ,
+   * Templecombe SMC). The snapshot's key is the station's code (see stationEntry).
+   */
+  function pickStationRows(items) {
+    const pool = Array.isArray(items) ? items.filter((i) => i && typeof i === 'object' && !isTargetRow(i)) : [];
     if (!pool.length) return { row: null, others: [] };
-    const row = pool.find((i) => isSwrToc(i.TOC)) || pool[0];
+    const row = pool.find((i) => isSwrToc(i.TOC)) || pool.find((i) => !isBlank(rowFigures(i))) || pool[0];
     return { row, others: pool.filter((i) => i !== row) };
   }
 
@@ -104,7 +113,8 @@
    *    punctual: compareToTarget(), cancelled: compareToTarget(), targetSource: 'snapshot'|'row'|null,
    *    period, plans: [{label, text}], others: [{toc, punctual, cancelled}]}
    * 'no-figures' covers a row with no usable numbers, and SWR's all-zero placeholder rows (0% on time and
-   * 0% cancelled can't both be true for a station with trains).
+   * 0% cancelled can't both be true for a station with trains). `crs` is the station's code as the caller
+   * knows it (the snapshot key); it's only reported back as station.crs, never matched against CRSCode.
    */
   function performanceSummary(raw, target, crs) {
     const empty = (reason) => ({
@@ -126,16 +136,15 @@
     const period = periodText(raw.Period);
     const plans = PLAN_FIELDS.map(([key, label]) => ({ label, text: clean(raw[key]) })).filter((p) => p.text);
 
-    const { row, others } = pickStationRows(items, crs);
+    const { row, others } = pickStationRows(items);
     if (!row) return { ...empty('no-row'), period, plans, targetSource };
 
-    const figures = (r) => ({ punctual: parsePercent(r.Punctal ?? r.Punctual), cancelled: parsePercent(r.Cancelled) });
-    const blank = (f) => (f.punctual === null && f.cancelled === null) || (f.punctual === 0 && f.cancelled === 0);
-    const own = figures(row);
-    const station = { name: clean(row.StationName) || null, crs: clean(row.CRSCode).toUpperCase() || null, toc: clean(row.TOC) || null };
-    const otherRows = others.map((r) => ({ toc: clean(r.TOC) || 'Another operator', ...figures(r) })).filter((f) => !blank(f));
+    const own = rowFigures(row);
+    // The caller's code (the snapshot key) wins over the row's CRSCode, which is wrong for a few stations.
+    const station = { name: clean(row.StationName) || null, crs: clean(crs).toUpperCase() || clean(row.CRSCode).toUpperCase() || null, toc: clean(row.TOC) || null };
+    const otherRows = others.map((r) => ({ toc: clean(r.TOC) || 'Another operator', ...rowFigures(r) })).filter((f) => !isBlank(f));
 
-    if (blank(own)) return { ...empty('no-figures'), station, period, plans, targetSource, others: otherRows };
+    if (isBlank(own)) return { ...empty('no-figures'), station, period, plans, targetSource, others: otherRows };
     return {
       hasData: true,
       reason: null,
