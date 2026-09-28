@@ -2,7 +2,7 @@
 
 Status of additions to the live station crowding dashboard, written so separate agents can each take a work package. Last updated 2026-09-27.
 
-Live site: https://jinalharia.github.io/tfl-dashboard/. Until the repo owner switches the Pages source to *GitHub Actions* (see package D), GitHub Pages deploys `main` from the repo root, about a minute after each merge. After the switch, each merge deploys only if the tests pass.
+Live site: https://jinalharia.github.io/tfl-dashboard/. The Pages source is *GitHub Actions* (switched by the owner; deploys from Actions succeeded on 2026-09-28), so each merge to `main` deploys only if the tests pass, and a scheduled deploy every 15 minutes refreshes the SWR status snapshot (package S7).
 
 ## Status at a glance
 
@@ -18,7 +18,7 @@ Live site: https://jinalharia.github.io/tfl-dashboard/. Until the repo owner swi
 | 8 | Network-wide status strip | ✅ Done (package B) | B |
 | 9 | Planned closures in the next 2 weeks | ✅ Done (package B) | B |
 | 2 | Live crowding along a whole line | ✅ Done (package C) | C |
-| — | Deploy only when tests pass (GitHub Actions) | ✅ Done (package D); owner must switch the Pages source | D |
+| — | Deploy only when tests pass (GitHub Actions) | ✅ Done (package D); Pages source switched to GitHub Actions | D |
 | — | Boarding estimate: trains you may need to let go before boarding | ✅ Done (package E) | E |
 
 **South Western Railway tab** (details in [South Western Railway tab](#south-western-railway-tab-packages-s0s7)):
@@ -31,12 +31,12 @@ Live site: https://jinalharia.github.io/tfl-dashboard/. Until the repo owner swi
 | SWR-7 | Delay and cancellation reasons on each departure | ✅ Done | S1 |
 | SWR-8 | Where is my train (calling points) | ✅ Done | S2 |
 | SWR-4 | SWR overall status (headline) | ✅ Done | S3 |
-| SWR-5 | Status by route group | ✅ Done; waiting for S7 snapshots in production | S3 |
-| SWR-6 | Incident details (ticket acceptance, replacement buses) | ✅ Done; waiting for S7 snapshots in production | S3 |
-| SWR-2 | Typical busyness per morning train into Waterloo | ✅ Done; waiting for S7 snapshots in production | S4 |
+| SWR-5 | Status by route group | ✅ Done (snapshots from S7) | S3 |
+| SWR-6 | Incident details (ticket acceptance, replacement buses) | ✅ Done (snapshots from S7) | S3 |
+| SWR-2 | Typical busyness per morning train into Waterloo | ✅ Done | S4 |
 | SWR-10 | SWR planned closures, next 14 days (investigate first) | ⬜ Not started | S5 |
-| SWR-11 | Station punctuality and cancellations | ⬜ Not started | S6 |
-| — | Scheduled snapshots of SWR data that browsers can't fetch directly | ⬜ Not started | S7 |
+| SWR-11 | Station punctuality and cancellations | ✅ Done | S6 |
+| — | Scheduled snapshots of SWR data that browsers can't fetch directly | ✅ Done | S7 |
 
 **Note on #1.** The proposal was "entry/exit footfall", but TfL's `passengerFlows` are about 10 *unlabelled* values per 15-minute slice, so they can't be split into entries and exits. What shipped is **typical passenger flow per line**: the per-slice sum, charted on each line card. TfL gives one profile for all days and it follows a weekday pattern, so the card says so at weekends.
 
@@ -109,13 +109,11 @@ One "Station information" section below the tiles, loaded when a station is sele
 
 ### Package D: tested deploys ✅ done
 
-**Status: ✅ done, waiting on one manual step by the repo owner.** `.github/workflows/pages.yml` runs on push to `main`, on pull requests against `main`, and on `workflow_dispatch`.
+**Status: ✅ done.** `.github/workflows/pages.yml` runs on push to `main`, on pull requests against `main`, and on `workflow_dispatch`.
 - **`test`** job: checkout, Node LTS (`lts/*`), `npm test`, then `node --check` on each file in `js/` and `tests/`. It runs on PRs too, so they get a visible check.
 - **`deploy`** job: `needs: test`, and runs only for a push to `main` or a manual run on `main`. It stages `index.html`, `css/` and `js/` plus an empty `.nojekyll` into `_site/`, then runs `actions/configure-pages`, `actions/upload-pages-artifact` and `actions/deploy-pages`. It has `pages: write`, `id-token: write` and `contents: read`, the `github-pages` environment with the page URL, and a `pages` concurrency group that lets a running deploy finish.
 
-**Manual step (repo owner):** in **Settings → Pages → Build and deployment → Source**, choose **GitHub Actions**.
-- Until then, Pages keeps deploying every push straight from `main`, with all files and whether or not the tests pass. The `deploy` job fails, but the `test` job still runs, so nothing else breaks.
-- After the switch, a push to `main` deploys only if the tests pass, and only the site files are published. The README, `plan.md`, `tests/` and `package.json` stop being public.
+**Pages source:** the owner has set **Settings → Pages → Build and deployment → Source** to **GitHub Actions** (deploys from Actions succeeded on 2026-09-28). A push to `main` deploys only if the tests pass, and only the site files are published; the README, `plan.md`, `tests/` and `package.json` aren't public. Package S7 later added a 15-minute `schedule`, `data/` to the staged files, and the SWR status snapshot to the deploy job.
 
 Notes from building it:
 - Action versions, checked against each repo's tags on 2026-09-27: `actions/checkout@v7`, `actions/setup-node@v7`, `actions/configure-pages@v6`, `actions/upload-pages-artifact@v5`, `actions/deploy-pages@v5`.
@@ -392,13 +390,41 @@ At the top of the SWR tab, in `#swr-status`.
 
 ### Package S6: station punctuality and cancellations (item SWR-11)
 
+**Status: ✅ done.** It waits for S7's `data/swr/performance.json` in production; until then the section says the figures aren't available here. Notes from building it (checked on 2026-09-28 in headless Chromium at 390 px and 1280 px, light and dark: `?demo` from disk, plain from disk, and a served copy of S7's real `performance.json` from its crawl on 2026-09-28, 171 stations):
+- **Files:** `js/swr-performance.js` (pure helpers exported for Node, a renderer, the demo route, the module), `css/swr-performance.css`, `tests/swr-performance.test.js`.
+- **What "Punctal" means,** from SWR's station performance page (`/travelling-with-us/performance/station-performance`): "Punctuality is the percentage of trains that arrived within 3 minutes of the scheduled time. Cancelled means the percentage of trains that were scheduled to but did not call at this station. This does not include station calls removed from the plan prior to 2200 the day before." Quoted in the section's "About this data"; the tile says "On time".
+- **Real quirks:**
+  - 38 shared stations have one row per operator (Clapham Junction: `TOC` "Arriva London", "GTR", "SWR"; Reading: GWR, CrossCountry, SWR). The SWR row is used and the others are listed under the tiles. Without an SWR row, the first row with figures is used and named.
+  - `CRSCode` is wrong in some responses (Farnham `FCH`, Reading `RDZ`, Templecombe `SMC`), so rows are never matched on it: every non-target row belongs to the station the response was fetched for, which is the snapshot's key (S7's name-to-CRS match).
+  - Berrylands has `"0.00"`/`"0.00"`, a blank rather than a perfect record, so all-zero rows count as no data and the section hides. In S7's file that's the only one of the 171 stations without figures.
+  - The "Wessex route target" row has `CRSCode: ""`, and was the same (86.12 / 3.68) for every station fetched.
+- **Target:** the snapshot's `target` (numbers, from S7) wins, field by field, over the response's own "Wessex route target" row. Numbers are accepted as strings or numbers; anything that isn't 0–100 is treated as missing. S7's optional `errors` object is ignored.
+- **Better or worse:** the difference is rounded to 0.1 percentage points; 0.0 is "On target". Lower is better for cancellations, and the tile says so. Better is green ✓, worse amber !, always with the words.
+- **Showing and hiding:** hidden until the snapshot has loaded, and for a station with no entry, no row or only blank figures (the snapshot covers SWR's 171 names, not all 204 stations). With no snapshot (from disk, or before S7), it shows a short "not available here" note, as the S0 contract asks. A snapshot older than 15 days gets a "May be out of date" pill.
+- **Refresh:** the file is weekly and `SwrApi.snapshot` caches it for 60 s, so `refresh` costs at most one small request a minute. The HTML is replaced only when it changes, and open `<details>` stay open.
+- **Demo:** `SwrApi.demoRoutes` answers `data/swr/performance.json` with real rows for WAT, CLJ, SUR, WOK and BRS and made-up ones for GLD, WIM, RMD and VXH, fetched "last Monday 05:17 UTC".
+
 - **Data:** `SwrApi.snapshot('performance.json')`, written weekly by S7. Source: `GET /api/stationperformance/{name}?skip=0&take=10` → `{Items[{StationName, CRSCode, Punctal: "85.00", Cancelled: "3.90"}, {StationName: "Wessex route target", Punctal: "86.12", Cancelled: "3.68"}], Period: "4-Week Period from 26 July to 22 August", Next3MonthPlan, NextYearPlan, LongTermPlan}`. There are 171 station names from `/api/stationperformance/GetStations`.
 - **Show:** two stat tiles, "On time %" and "Cancelled %", each compared with the route target (better or worse, in words), plus the period. The three "plan" texts go in a collapsed `<details>`. Label it clearly as a past 4-week period, not live.
-- **Tests:** `performanceSummary(raw)` for parsing the strings to numbers, picking the target row, better or worse than target, and missing values.
+- **Tests:** `performanceSummary(raw, target, crs)` for parsing the strings to numbers, picking the station's SWR row and the target row, better or worse than target, missing and odd values, all-zero rows, and a station with no row.
 
 ### Package S7: scheduled snapshots of the SWR website API
 
 The SWR website API sends no CORS headers, so the site publishes copies of it from GitHub Actions.
+
+**Status: ✅ done.** Notes from building it (the weekly crawl was run once for real on 2026-09-28 and its output committed under `data/swr/`):
+- **Files:** `scripts/swr-snapshot.js`, `tests/swr-snapshot.test.js`, `.github/workflows/swr-weekly.yml`, changes to `pages.yml`, and the first weekly data: `data/swr/seats/` (164 stations plus `index.json`) and `performance.json` (171 stations), 166 files and 833 KB in all. The crawl made 338 requests in 337 s with no failures. Clapham Junction had 108 seat items, so paging is used for real.
+- **The formats are as specified, with additive extras only:** `seats/index.json` and `performance.json` get an `errors` object ({name: message}) when a station's request failed or its name didn't match, and none otherwise. `performance.json`'s `target` holds numbers (`{punctual: 86.12, cancelled: 3.68}`), parsed from the target row's strings. `status.json` always has all three keys, with `null` for a source that failed (named in `errors`).
+- **Station names:** `matchStationName` normalises case, `&`/`and`, apostrophes and punctuation, then tries again with bracketed parts dropped (only if exactly one station matches), then an alias table. The only alias needed is `Boxhill & Westhumble` → `BXW` (swrstations: "Box Hill & Westhumble"). **Every name matched** in both lists (164 seat origins, 171 performance names); `NOT FOUND` and London Waterloo are skipped.
+- **Don't trust `CRSCode` inside performance responses:** Farnham says `FCH`, Reading `RDZ` and Templecombe `SMC`. `performance.json` is keyed by the CRS from the name match, so S6 should use the key, not the rows' `CRSCode`.
+- **Shared stations have one row per operator** in the performance response (38 of 171, e.g. Southampton Central: GWR, CrossCountry, GTR, SWR). S6 should pick the row with `TOC: "SWR"`. The "Wessex route target" row is the same for every station.
+- **No data at all** (neither seat nor performance list) for 11 SWR stations: Chandlers Ford, Hamble, Kempton Park, Millbrook (Hants), Mottisfont & Dunbridge, Netley, Ryde Pier Head, Sholing, Swanwick, Upwey, Woolston. 29 stations have performance but no seat file: London Waterloo itself, the Island Line, Dorset beyond Poole, the Lymington branch, the Salisbury–Westbury–Castle Cary line, and a few small stations such as Ash, Bitterne and Wanborough.
+- **Failures:** a list that can't be fetched leaves last week's files alone; a station whose request fails keeps last week's seat file (and stays in the index). Seat files are deleted only for stations the new list no longer has data for. Exit code 1 only when every source failed, and `pages.yml` turns even that into a warning, so SWR being down never blocks a deploy.
+- **Closures hook for S5:** in `--status` mode, if `scripts/swr-closures.js` exists, it's `require`d and `await snapshot({fetchJson, fetchText, log})` is called with the same polite client (so its requests are also spaced 1 s apart). A non-null result goes to `closures.json` next to `status.json` (with `fetchedAt` added if it's an object without one); a throw is recorded as `errors.closures` in `status.json`. Tested with fake modules.
+- **Trying it out:** `--limit N` crawls only the first N names of each list and never deletes seat files. Don't point a limited run at `data/swr/`.
+- **Pages source:** it is *GitHub Actions* now, so `status.json` (built at deploy time, not committed) is live after this merges. The deploy job needed `actions/setup-node`. The `test` job also runs on each scheduled run (every 15 minutes), because `deploy` needs it.
+- **Risk: branch protection.** `swr-weekly.yml` pushes to `main` as github-actions[bot] with `GITHUB_TOKEN`. If `main` is protected against direct pushes, that step fails and the weekly data stops updating. The fixes would be allowing the bot to bypass, or switching the workflow to open a PR.
+- **Risk: schedules.** GitHub runs cron late at busy times and disables schedules after 60 days without repo activity; the SWR tab shows each snapshot's time.
 
 - **Script:** `scripts/swr-snapshot.js` (Node LTS, global `fetch`, no dependencies, CommonJS like the rest).
   - **Be polite:** one request at a time, at least 1 s apart, a 30 s timeout, one retry, and `User-Agent: tfl-dashboard (https://github.com/jinalharia/tfl-dashboard)`.
@@ -410,7 +436,7 @@ The SWR website API sends no CORS headers, so the site publishes copies of it fr
   - `pages.yml`: add `schedule: cron '7,22,37,52 * * * *'`, and allow `schedule` in the deploy job's `if`. The *Stage site files* step copies `data/` too and runs `node scripts/swr-snapshot.js --status --out _site/data/swr`.
   - New `swr-weekly.yml`: runs Mondays around 05:17 UTC and on `workflow_dispatch`, with `contents: write` and `actions: write`. It runs `--weekly`, commits `data/swr/` to `main` only if something changed, then starts `pages.yml` with `gh workflow run`, because a push made with `GITHUB_TOKEN` doesn't trigger workflows.
   - Scheduled runs can start 10–30 minutes late, and GitHub turns schedules off after 60 days with no repo activity. The page shows `fetchedAt` so staleness is visible.
-- **Depends on the owner's Pages switch** (package D). Until the Pages source is *GitHub Actions*, `status.json` isn't published, but the committed weekly files are served from `main` anyway. S3, S4 and S6 must handle both cases.
+- **Needed the owner's Pages switch** (package D), which is done: `status.json` exists only in the Actions-built site. S3, S4 and S6 still handle a missing file (opened from disk, or SWR down at deploy time).
 - **Tests:** `matchStationName`, and a function that builds each file from raw responses. Fixtures are the samples in S4 and S6 and an `overallstatus` / `LiveInformationBoard` / `RainbowBoard` trio.
 
 #### Snapshot file formats (S7 writes, S3, S4, S6 read)

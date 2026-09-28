@@ -50,24 +50,27 @@ Opening `index.html` directly from disk also works.
 
 ## Deploying
 
-The site is live at https://jinalharia.github.io/tfl-dashboard/. The workflow in `.github/workflows/pages.yml` runs on every push to `main`, every pull request against `main`, and on demand (*Actions → Test and deploy to Pages → Run workflow*):
+The site is live at https://jinalharia.github.io/tfl-dashboard/. Pages is set to deploy from **GitHub Actions** (Settings → Pages → Build and deployment → Source), so only tested site files are published. The workflow in `.github/workflows/pages.yml` runs on every push to `main`, every pull request against `main`, every 15 minutes (`schedule`, to refresh the SWR status snapshot) and on demand (*Actions → Test and deploy to Pages → Run workflow*):
 
 - **`test`** runs `npm test` and checks the syntax of every file in `js/`, `tests/` and `scripts/`. Pull requests show it as a check.
-- **`deploy`** runs only for a push to `main` or a manual run on `main`, and only if `test` passed. It copies just `index.html`, `css/` and `js/` (plus an empty `.nojekyll`) into `_site/` and publishes that to GitHub Pages. The README, `plan.md`, `tests/`, `package.json` and the workflow itself aren't published.
+- **`deploy`** runs only for a push, a scheduled run or a manual run on `main`, and only if `test` passed. It copies just `index.html`, `css/`, `js/` and `data/` (plus an empty `.nojekyll`) into `_site/`, adds a fresh SWR status snapshot, and publishes that to GitHub Pages. The README, `plan.md`, `tests/`, `scripts/`, `package.json` and the workflows aren't published.
 
-**One manual step for the repo owner.** In **Settings → Pages → Build and deployment → Source**, choose **GitHub Actions**.
-- Until that's done, Pages keeps deploying every push straight from `main` (all files, tested or not). The workflow's `deploy` job fails, but the `test` job still runs, so nothing else breaks.
-- Once it's switched, a push to `main` is deployed only if the tests pass, and only the site files are published.
+**Snapshots.** SWR's website API sends no CORS headers, so `scripts/swr-snapshot.js` copies it into `data/swr/` for the SWR tab (one request at a time, 1 s apart, a 30 s timeout and one retry; a failed source is recorded in the file's `errors`):
+- `--status` writes `status.json` (3 requests). The deploy job runs it into `_site/data/swr/` on every deploy, so it isn't committed. If SWR is down, the site deploys without it.
+- `--weekly` writes `seats/{CRS}.json`, `seats/index.json` and `performance.json` (about 350 requests, 6 minutes). `.github/workflows/swr-weekly.yml` runs it on Mondays at about 05:17 UTC (or by hand), commits `data/swr/` to `main` as github-actions[bot] if anything changed, and then starts `pages.yml`, because a push made with the workflow's own token doesn't trigger workflows. If `main` gets branch protection that blocks the bot, that push fails.
+- To try it locally: `node scripts/swr-snapshot.js --weekly --limit 3 --out /tmp/swr` (only the first 3 stations of each list).
+- Scheduled runs can start 10–30 minutes late, and GitHub switches schedules off after 60 days without repo activity. The SWR tab shows each snapshot's time.
 
 To check the published file set locally, build `_site/` with the same commands the workflow uses and serve it:
 
 ```sh
-rm -rf _site && mkdir _site && cp -R index.html css js _site/ && touch _site/.nojekyll
+rm -rf _site && mkdir _site && cp -R index.html css js data _site/ && touch _site/.nojekyll
+node scripts/swr-snapshot.js --status --out _site/data/swr
 python3 -m http.server 8000 --directory _site
 # open http://localhost:8000/?demo
 ```
 
-If you add a file the page loads from outside `index.html`, `css/` and `js/` (an icon, a manifest, a data file), add it to the *Stage site files* step in the workflow too.
+If you add a file the page loads from outside `index.html`, `css/`, `js/` and `data/` (an icon, a manifest), add it to the *Stage site files* step in the workflow too.
 
 ## TfL endpoints used
 
@@ -128,7 +131,10 @@ The SWR tab's client is `js/swr-api.js`. These sources send `Access-Control-Allo
 | SWR snapshots published with the site | `GET data/swr/{path}` (written by S7). `SwrApi.snapshot(path)` returns `null` on any failure, and doesn't try when the page is opened from disk. | S3, S4, S6 |
 | TfL status for SWR | `GET https://api.tfl.gov.uk/Line/south-western-railway/Status` through the shared TfL client (`ctx.tfl`). | S3 |
 | SWR service status boards (via the snapshot) | `GET https://www.southwesternrailway.com/api/overallstatus` → `{Status, Summary, LineUpdates[{Summary, Details (HTML), FurtherInfo, UpdatedTime, IncidentId, Colour}]}`; `/api/LiveInformationBoard` → 13 route groups `[{RouteName, StatusText, StatusId}]`; `/api/RainbowBoard` → `{LastUpdated, Lines[{Description, Status, Incidents}]}` per service and direction. No CORS, so the page reads them from `data/swr/status.json` (`SwrApi.snapshot('status.json')`, written by S7). | S3 |
-| SWR typical busyness per morning train (via the snapshot) | `GET https://www.southwesternrailway.com/api/seatavailability/{fromName}/London%20Waterloo?skip=0&take=100` → `{TotalResults, Items[{Id, Departure "06:28", Arrival "07:04", Via ("-" = none), NumberOfCarriages, Monday…Friday, Mon_TrainName…Fri_TrainName ("Arterio" or "")}]}`. Levels are `"Green"`, `"Amber"`, `"Red"`, `"VeryRed"` or `""`; SWR's own labels (from its [How busy is my train?](https://www.southwesternrailway.com/plan-my-journey/how-busy-is-my-train) page) are "Seats available", "Some seats available", "Standing room only", "Full to capacity" and "No Service". `JourneyDuration` (`"12:34:00 AM"`) isn't a duration, so the journey time comes from `Departure`/`Arrival`. Weekday mornings **into London Waterloo** only (Woking: 43 trains, 06:28–09:28). No CORS, so the page reads `data/swr/seats/{CRS}.json` and `seats/index.json` (`SwrApi.snapshot`, written weekly by S7). | S4 |
+| SWR seat availability, origins (weekly snapshot) | `GET https://www.southwesternrailway.com/api/seatavailability/stations/London%20Waterloo` → `["Addlestone", …, "NOT FOUND", …]` (166 names on 2026-09-27, in SWR's own spelling, e.g. `"Ascot"`, `"Boxhill & Westhumble"`). `NOT FOUND` and London Waterloo itself are skipped. No CORS; fetched by `scripts/swr-snapshot.js --weekly`. | S7 |
+| SWR typical busyness per morning train (via the snapshot) | `GET https://www.southwesternrailway.com/api/seatavailability/{fromName}/London%20Waterloo?skip=0&take=100` → `{TotalResults, Items[{Id, Departure "06:28", Arrival "07:04", Via ("-" = none), NumberOfCarriages, Monday…Friday, Mon_TrainName…Fri_TrainName ("Arterio" or "")}]}`. Levels are `"Green"`, `"Amber"`, `"Red"`, `"VeryRed"` or `""`; SWR's own labels (from its [How busy is my train?](https://www.southwesternrailway.com/plan-my-journey/how-busy-is-my-train) page) are "Seats available", "Some seats available", "Standing room only", "Full to capacity" and "No Service". `JourneyDuration` (`"12:34:00 AM"`) isn't a duration, so the journey time comes from `Departure`/`Arrival`. Weekday mornings **into London Waterloo** only (Woking: 43 trains, 06:28–09:28). No CORS, so the page reads `data/swr/seats/{CRS}.json` and `seats/index.json` (`SwrApi.snapshot`, written weekly by S7, which pages while `TotalResults` > 100 and writes a file only for stations with at least one train). | S4 (S7 fetches) |
+| SWR station performance, names (weekly snapshot) | `GET https://www.southwesternrailway.com/api/stationperformance/GetStations` → 171 names (e.g. `"Ascot (Berks)"`, `"Box Hill and Westhumble"`). | S7 |
+| SWR station performance (via the snapshot) | `GET https://www.southwesternrailway.com/api/stationperformance/{name}?skip=0&take=10` → `{TotalResults, Items[{StationName, CRSCode, TOC, Punctal: "85.00", Cancelled: "3.90"}, …, {StationName: "Wessex route target", CRSCode: "", Punctal: "86.12", Cancelled: "3.68"}], Period: "4-Week Period from 26 July to 22 August", Next3MonthPlan, NextYearPlan, LongTermPlan}`. Numbers are strings; shared stations have one row per operator (`TOC`); some stations have all-zero placeholder rows; `CRSCode` is wrong for a few (Farnham `FCH`, Reading `RDZ`), so the page goes by the snapshot's CRS key. `Punctal` is SWR's punctuality: trains that arrived within 3 minutes of schedule. `/api/stationperformance/GetStations` lists the 171 names. No CORS, so the page reads `data/swr/performance.json` (`SwrApi.snapshot('performance.json')`, written weekly by S7). | S6 (S7 fetches) |
 | SWR station list (build time only) | `GET https://www.southwesternrailway.com/api/swrstations` → `[{Name, CrsCode, NationalLocationCode, Latitude, Longitude, Url}]` (204 on 2026-09-27). No CORS, so `scripts/swr-stations.js` fetches it and writes `js/swr-stations.js`. | S0 |
 | TfL stops on the SWR line (build time only) | `GET https://api.tfl.gov.uk/Line/south-western-railway/StopPoints` (202 stops) → `naptanId`, `commonName`, `lat`, `lon`, `hubNaptanCode`. Each SWR station is matched to the nearest `910G…` stop within 400 m whose name agrees. The 8 Island Line stations (Brading, Lake, Ryde Esplanade, Ryde Pier Head, Ryde St Johns Road, Sandown, Shanklin, Smallbrook Junction) have no TfL stop. | S0 |
 
@@ -151,9 +157,11 @@ js/swr-stations.js  SWR stations matched to TfL stops (generated by scripts/swr-
 js/swr-api.js       SWR / National Rail client, cache, demo routes and shared pure helpers
 js/swr-app.js       tab bar, SWR station picker and header, module lifecycle (SwrApp.register)
 js/swr-*.js         one file per SWR package, each registering with SwrApp
-scripts/            Node scripts run by hand (swr-stations.js)
+scripts/            Node scripts: swr-stations.js (run by hand), swr-snapshot.js (run by the workflows)
+data/swr/           SWR website API snapshots (weekly files committed by swr-weekly.yml)
 tests/              node:test unit tests
-.github/workflows/pages.yml   test on every push and PR; deploy to Pages when tests pass
+.github/workflows/pages.yml   test on every push and PR; deploy to Pages when tests pass (and every 15 min)
+.github/workflows/swr-weekly.yml   weekly SWR seat and performance snapshot, committed to main
 ```
 
 Run the tests with `npm test` (Node 18+).

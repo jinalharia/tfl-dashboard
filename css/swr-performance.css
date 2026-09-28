@@ -1,1 +1,35 @@
-/* TODO(package S6): styles for station punctuality and cancellations (SWR-11). Placeholder created by package S0; package S6 replaces this file wholesale. */
+/* ---------- SWR tab: station punctuality and cancellations (package S6, #swr-performance) ---------- */
+/* Tiles reuse .tile / .tile-head / .tile-value and the .status pills from css/styles.css. */
+#swr-performance { min-width: 0; }
+.swr-pf-sub { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 4px 0 2px; font-size: 14px; }
+.swr-pf-past {
+  flex: none; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-secondary); background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px;
+}
+.swr-pf-asof { margin: 0 0 10px; }
+.swr-pf-stale { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; margin: 0 0 10px; font-size: 13px; color: var(--text-secondary); }
+.swr-pf-nosnap { margin: 8px 0 0; max-width: 80ch; }
+
+/* Two tiles side by side, even on a phone (each is only a number, a pill and a sentence). */
+.swr-pf-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 12px; max-width: 640px; }
+.swr-pf-tile { min-width: 0; }
+.swr-pf-value { font-variant-numeric: tabular-nums; }
+.swr-pf-verdict { align-self: flex-start; border-radius: 10px; }
+.swr-pf-sentence { margin: 0; font-size: 13px; color: var(--text-secondary); }
+
+.swr-pf-others { margin: 10px 0 0; max-width: 80ch; }
+
+.swr-pf-plans { margin-top: 12px; max-width: 80ch; }
+.swr-pf-plans summary, .swr-pf-about summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); }
+.swr-pf-plans dl { margin: 8px 0 0; font-size: 13px; }
+.swr-pf-plans dt { font-weight: 600; margin-top: 8px; }
+.swr-pf-plans dd { margin: 2px 0 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+
+.swr-pf-about { margin-top: 16px; }
+.swr-pf-about ul { margin: 8px 0; padding-left: 18px; font-size: 13px; color: var(--text-secondary); max-width: 90ch; }
+.swr-pf-about li { margin-bottom: 6px; overflow-wrap: anywhere; }
+
+@media (max-width: 640px) {
+  .swr-pf-tile { padding: 12px 14px; }
+  .swr-pf-value { font-size: 30px; }
+}
