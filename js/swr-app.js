@@ -32,7 +32,7 @@
 
   const A = window.SwrApi;
   const REFRESH_MS = 60 * 1000;
-  const QUICK_PICKS = ['WAT', 'VXH', 'CLJ', 'WIM', 'SUR', 'RMD', 'WOK', 'GLD'];
+  const QUICK_PICKS = ['WAT', 'VXH', 'CLJ', 'WIM', 'RAY', 'NEM', 'SUR'];
   const TAGLINES = {
     tfl: 'Every line at a London station, from the TfL API',
     swr: 'South Western Railway trains at a station, from SWR and National Rail',

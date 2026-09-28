@@ -259,7 +259,7 @@ S0 builds exactly these names, so the other packages can code against them befor
   - The list is a committed JS file, not JSON, so it works when `index.html` is opened from disk. Rerun the script by hand when SWR's station list changes.
 - **Picker:**
   - A search box over `SWR_STATIONS`, matching name or CRS code with the same keyboard behaviour as the TfL search.
-  - Quick picks: London Waterloo, Vauxhall, Clapham Junction, Wimbledon, Surbiton, Richmond, Woking, Guildford.
+  - Quick picks: London Waterloo, Vauxhall, Clapham Junction, Wimbledon, Raynes Park, New Malden, Surbiton.
   - A station header with the name, CRS code and an "Updated …" time, plus an Auto-refresh (60 s) toggle (`swr.autoRefresh`) and "Refresh now".
   - This makes every SWR-only station (Surbiton, Woking, …) searchable, which is item SWR-9.
 - **Links between the tabs:**

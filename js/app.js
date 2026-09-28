@@ -12,7 +12,7 @@
     : [
         ['940GZZLUKSX', "King's Cross"], ['940GZZLUOXC', 'Oxford Circus'], ['940GZZLUSTD', 'Stratford'],
         ['940GZZLUBNK', 'Bank'], ['940GZZLUWLO', 'Waterloo'], ['940GZZLULNB', 'London Bridge'],
-        ['940GZZLULVT', 'Liverpool Street'], ['940GZZLUVIC', 'Victoria'],
+        ['940GZZLULVT', 'Liverpool Street'], ['940GZZLUVIC', 'Victoria'], ['940GZZLUWIM', 'Wimbledon'],
       ];
 
   const $ = (sel) => document.querySelector(sel);

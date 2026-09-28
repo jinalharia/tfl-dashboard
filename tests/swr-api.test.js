@@ -205,7 +205,7 @@ test('the committed js/swr-stations.js has every quick pick, with TfL links at t
   assert.ok(SWR_STATIONS.length >= 200);
   const crs = new Set(SWR_STATIONS.map((s) => s.crs));
   assert.equal(crs.size, SWR_STATIONS.length, 'CRS codes are unique');
-  for (const c of ['WAT', 'VXH', 'CLJ', 'WIM', 'SUR', 'RMD', 'WOK', 'GLD']) assert.ok(crs.has(c), c);
+  for (const c of ['WAT', 'VXH', 'CLJ', 'WIM', 'RAY', 'NEM', 'SUR']) assert.ok(crs.has(c), c);
   assert.deepEqual(A.stationByCrs('wat'), {
     crs: 'WAT', name: 'London Waterloo', nlc: '5598', lat: 51.503507, lon: -0.113897,
     naptan: '910GWATRLMN', tflHub: 'HUBWAT', url: '/travelling-with-us/at-the-station/London-Waterloo',
