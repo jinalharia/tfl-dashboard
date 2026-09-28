@@ -1,0 +1,60 @@
+# Weekly snapshot of the SWR website API's seat availability and station
+# performance (data/swr/seats/*.json, data/swr/performance.json), committed to
+# main so the next deploy publishes it. About 350 requests at 1 per second.
+#
+# A push made with GITHUB_TOKEN doesn't start other workflows, so this starts
+# pages.yml itself. If main gets branch protection that blocks pushes from
+# github-actions[bot], the push step fails and the data stays as it was.
+name: Weekly SWR snapshot
+
+on:
+  schedule:
+    - cron: '17 5 * * 1'   # Mondays 05:17 UTC; scheduled runs can start late
+  workflow_dispatch:
+
+permissions:
+  contents: write   # commit data/swr/
+  actions: write    # start pages.yml
+
+concurrency:
+  group: swr-weekly
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+
+      # Exits 1 only when every source failed; single failures are recorded in the files' errors.
+      - name: Fetch seat availability and station performance
+        run: node scripts/swr-snapshot.js --weekly --out data/swr
+
+      - name: Commit data/swr/ if it changed
+        id: commit
+        run: |
+          git add -A data/swr
+          if git diff --cached --quiet; then
+            echo "No change in data/swr/."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Weekly SWR snapshot ($(date -u +%Y-%m-%d))"
+          git push origin HEAD:main
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy the new snapshot
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main
