@@ -1,1 +1,92 @@
-/* TODO(package S2): styles for where is my train, calling points (SWR-8); listens for the swr:service-open event, no section of its own. Placeholder created by package S0; package S2 replaces this file wholesale. */
+/* SWR package S2: calling points for one departure ("where is my train").
+   Fills S1's div.swr-dep-detail. Uses the tokens from css/styles.css (light and dark). */
+
+.swr-cp { display: flex; flex-direction: column; gap: 8px; padding: 10px 0 4px; font-size: 14px; min-width: 0; }
+.swr-cp p { margin: 0; }
+.swr-cp-summary { font-weight: 600; color: var(--text-primary); }
+.swr-cp-note { font-size: 13px; color: var(--bad-text); }
+.swr-cp-loading, .swr-cp-error { margin: 0; padding: 10px 0; font-size: 13px; color: var(--text-secondary); }
+.swr-cp-error { color: var(--bad-text); }
+
+.swr-cp-toggle {
+  align-self: flex-start; background: transparent; color: var(--accent);
+  border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; font-size: 13px;
+}
+.swr-cp-toggle:hover { background: var(--surface-2); }
+
+/* ---------- Stop list: a vertical line with one dot per stop ---------- */
+.swr-cp-list { list-style: none; margin: 0; padding: 0; }
+.swr-cp-stop {
+  position: relative; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; column-gap: 10px;
+  align-items: start; padding: 5px 8px 5px 4px; border-radius: 8px;
+}
+.swr-cp-stop[hidden] { display: none; }
+/* Line segment through the dot column; passed segments are drawn solid in the accent colour. */
+.swr-cp-stop::before {
+  content: ""; position: absolute; left: 12px; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--gridline);
+}
+.swr-cp-stop.is-passed::before { background: var(--axis); }
+.swr-cp-stop.is-first::before { top: 14px; }
+.swr-cp-stop.is-final::before { bottom: calc(100% - 14px); }
+.swr-cp-stop.is-first.is-final::before { display: none; }
+
+.swr-cp-dot {
+  position: relative; z-index: 1; justify-self: center; margin-top: 4px;
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid var(--axis); background: var(--surface-1);
+}
+.swr-cp-stop.is-passed .swr-cp-dot { background: var(--axis); }
+.swr-cp-stop.is-cancelled .swr-cp-dot { border-color: var(--critical); border-style: dashed; }
+.swr-cp-stop.is-last .swr-cp-dot {
+  width: 16px; height: 16px; margin-top: 2px; border-color: var(--accent); background: var(--accent);
+  box-shadow: 0 0 0 3px var(--surface-1);
+}
+
+.swr-cp-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.swr-cp-name { font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
+.swr-cp-time { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text-primary); white-space: nowrap; padding-top: 1px; }
+
+.swr-cp-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.swr-cp-icon {
+  flex: none; display: inline-grid; place-items: center; min-width: 16px; height: 16px; padding: 0 3px;
+  border-radius: 8px; font-size: 10px; font-weight: 700; color: #fff; background: var(--text-muted);
+}
+.swr-cp-good .swr-cp-icon { background: var(--good); }
+.swr-cp-warning .swr-cp-icon { background: var(--warning); color: #0b0b0b; }
+.swr-cp-serious .swr-cp-icon { background: var(--serious); color: #0b0b0b; }
+.swr-cp-critical .swr-cp-icon { background: var(--critical); }
+.swr-cp-good .swr-cp-status { color: var(--good-text); }
+.swr-cp-warning .swr-cp-status,
+.swr-cp-serious .swr-cp-status,
+.swr-cp-critical .swr-cp-status { color: var(--bad-text); font-weight: 600; }
+
+/* Passed stops are dimmed (text stays readable; the icon keeps its colour). */
+.swr-cp-stop.is-passed .swr-cp-name,
+.swr-cp-stop.is-passed .swr-cp-time,
+.swr-cp-stop.is-passed .swr-cp-status { color: var(--text-muted); font-weight: 400; }
+.swr-cp-stop.is-passed .swr-cp-icon { opacity: 0.75; }
+.swr-cp-stop.is-cancelled .swr-cp-name,
+.swr-cp-stop.is-cancelled .swr-cp-time { text-decoration: line-through; text-decoration-thickness: 1px; }
+
+/* The station being viewed. */
+.swr-cp-stop.is-viewing { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
+.swr-cp-stop.is-viewing .swr-cp-name { color: var(--text-primary); font-weight: 700; }
+
+.swr-cp-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.swr-cp-tag {
+  display: inline-block; font-size: 11px; font-weight: 600; line-height: 1.4; padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+}
+.swr-cp-tag-last { border-color: var(--accent); color: var(--accent); }
+.swr-cp-tag-here { background: var(--accent); border-color: var(--accent); color: #fff; }
+:root[data-theme="dark"] .swr-cp-tag-here { color: #0d0d0d; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .swr-cp-tag-here { color: #0d0d0d; } }
+
+.swr-cp-meta { font-size: 12px; color: var(--text-secondary); }
+.swr-cp-about { font-size: 12px; color: var(--text-secondary); }
+.swr-cp-about summary { cursor: pointer; width: fit-content; }
+.swr-cp-about p { margin: 6px 0 0; max-width: 70ch; }
+
+@media (max-width: 420px) {
+  .swr-cp-stop { column-gap: 8px; padding-right: 4px; }
+}

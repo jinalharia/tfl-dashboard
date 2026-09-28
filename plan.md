@@ -26,10 +26,10 @@ Live site: https://jinalharia.github.io/tfl-dashboard/. Until the repo owner swi
 | # | Addition | Status | Package |
 |---|---|---|---|
 | SWR-9 | Tab bar (TfL / SWR), SWR station picker, shared SWR client | ✅ Done | S0 |
-| SWR-3 | Live SWR departures board | ⬜ Not started | S1 |
-| SWR-1 | Train length on each departure, short-train warning | ⬜ Not started | S1 |
-| SWR-7 | Delay and cancellation reasons on each departure | ⬜ Not started | S1 |
-| SWR-8 | Where is my train (calling points) | ⬜ Not started | S2 |
+| SWR-3 | Live SWR departures board | ✅ Done | S1 |
+| SWR-1 | Train length on each departure, short-train warning | ✅ Done | S1 |
+| SWR-7 | Delay and cancellation reasons on each departure | ✅ Done | S1 |
+| SWR-8 | Where is my train (calling points) | ✅ Done | S2 |
 | SWR-4 | SWR overall status (headline) | ✅ Done | S3 |
 | SWR-5 | Status by route group | ✅ Done; waiting for S7 snapshots in production | S3 |
 | SWR-6 | Incident details (ticket acceptance, replacement buses) | ✅ Done; waiting for S7 snapshots in production | S3 |
@@ -273,6 +273,20 @@ S0 builds exactly these names, so the other packages can code against them befor
 
 ### Package S1: live departures with train length and delay reasons (items SWR-3, SWR-1, SWR-7)
 
+**Status: ✅ done.** Notes from building it (checked on 2026-09-27, a Sunday evening, in headless Chromium at 390 px in light and dark, in `?demo` and against the live APIs through `page.route` + `curl`):
+- **The join works.** With both requests made within a second, every Huxley row matched a railinfo `Id` (Waterloo 40 of 55, Clapham Junction 40 of 100, Surbiton 37 of 38). The rest are beyond Huxley's 40 rows and show "Length unknown", the same as `length: 0`. At Clapham Junction the 40 Huxley rows cover only about the next 25 minutes, because two-thirds of them are other operators'.
+- **The two sources can disagree.** railinfo is the board, so its time, status and platform win. Huxley only fills a `null` platform. One Waterloo train was on platform 3 in railinfo and platform 5 in Huxley. A train is shown as cancelled if either source says so.
+- **Real values seen:** `EstimatedTime` was `"On time"`, `"HH:MM"`, `"Delayed"` or `"Cancelled"`, and `classifyEstimate()` shows anything else as grey text. Late by 1–4 minutes is amber and 5 or more orange. Lengths were 0, 3, 4, 6, 8, 10 and 12. Delayed trains stay on the board after their scheduled time (18:53 at 19:42).
+- **Other operators:** SWR is `operatorCode` `SW` or `IL`, or `Operator` "South Western Railway" / "Island Line" when railinfo is on its own. The hidden count names the other operators ("38 trains by Southern and London Overground hidden").
+- **Replacement buses:** railinfo `BusItems` (Surbiton had 4 to Berrylands on the day), or Huxley `busServices` when railinfo fails, go in a separate list with no coaches.
+- **Failures:**
+  - Huxley down: a "Train length unavailable" note, and no lengths or reasons.
+  - railinfo down: the board comes from Huxley alone, with a note.
+  - Both down on a refresh: the last list stays, with "Couldn't refresh; showing the list from HH:MM".
+- **Row contract:** on refresh, S1 moves each open `div.swr-dep-detail` node (and whatever S2 put in it) into the new markup, then re-dispatches `swr:service-open` with that same container, so an open list doesn't flicker or close. A row that has left the board is dropped from the open set. Late responses are dropped with `ctx.isStale()` plus a sequence counter, so an older refresh can't overwrite a newer one.
+- **Demo:** `SwrDepartures.demoRoute` answers railinfo `/journey/departures/{CRS}` and Huxley `/departures/{CRS}/{rows}` for any station. There are hand-made boards for WAT, CLJ (other operators) and SUR (buses), with times shifted to now, and a generic board elsewhere named from `stationByCrs`. The Huxley body carries the real `nrccMessages` (including the `http://https://` link) for WAT and CLJ, so S3 uses the same route.
+- **Pure helpers** are exported for tests: `normalizeDepartures(railinfo, huxley, {allOperators, limit})`, `classifyEstimate`, `minutesBetween` and friends, and `renderBoard()`, which returns an HTML string so the markup contract and escaping are tested in Node.
+
 **Question:** when is the next train, which platform, is it on time, and is it a short train that will be packed?
 
 - **Data:**
@@ -290,6 +304,18 @@ S0 builds exactly these names, so the other packages can code against them befor
 - **Tests:** `normalizeDepartures(railinfo, huxley)` joins and flags rows: late, cancelled, short, unknown length (`0`), a missing Huxley row, and an operator filter. Base the fixtures on the Waterloo and Clapham Junction responses.
 
 ### Package S2: where is my train, calling points (item SWR-8)
+
+**Status: ✅ done.** Notes from building it (checked on 2026-09-27 in headless Chromium at 390 px in light and dark, with S0 and S1 merged, in `?demo` and against the live APIs through `page.route` + `curl`):
+- **Quirks in the real railinfo response:**
+  - The top-level `Destination` is really the station the service id belongs to (the board's station).
+  - That station's row has `ScheduledTime: null` when it's the origin, so its times come from the top-level `ScheduledDeparture` / `EstimatedDeparture` / `ActualDeparture`. That's also the time on S1's board, so the list uses the departure time for the viewed stop even mid-journey, where the row gives the arrival time (Surbiton: row 20:05, departure 20:09).
+  - `ActualTime` is usually the words `"On time"`, not a clock time. Passed stops have `IsVisited: true` and `EstimatedTime: null`.
+- **Huxley's `/service/{id}` leaves out the id's own station**, which is only in the top-level `sta`/`std`/`etd`/`atd`, so S2 inserts it between `previousCallingPoints` and `subsequentCallingPoints`. Only the first group of each list is this train; any further groups are joining or splitting portions. For the same train at the same moment, the two sources normalise to identical stops (tested).
+- **Last reported location** is railinfo's `LastLocation`. Where a station appears twice (Virginia Water, on the Reading line), it's the last copy the train has passed. Without `LastLocation`, and always for Huxley, it's the last passed stop. It's labelled "last reported", not a live position.
+- **Refresh:** S1 moves an open row's detail div into the new markup and re-dispatches `swr:service-open`. S2 keeps what's shown, then repaints when the (30 s cached) data arrives, keeping the open "About this data" and focus on its own controls. S1's re-render briefly takes the div out of the page, which drops focus to `<body>`; S2 restores it straight after unless focus has moved elsewhere. Late responses are dropped if the row was closed (`hidden`), removed or re-requested.
+- **Folding:** passed stops before the one just before the last reported location fold behind "Show N earlier stops". The viewed and last reported stops are never folded. Whether it's open is remembered per service across refreshes.
+- **Lateness colours** match S1's board: 1–4 minutes late is amber, 5 or more orange; every status also has an icon and text.
+- **Demo:** the demo route asks the other demo routes (S1's fixture) for the opened row on the viewed station's railinfo board, so the demo train calls there at the row's time, with its delay, cancellation and destination. Without a row, it's an id-keyed Waterloo → Reading train.
 
 - **Data:** `SwrApi.service(id)` (railinfo `POST /journey/services`). If that fails, fall back to `SwrApi.huxleyService(id)` (`previousCallingPoints` / `subsequentCallingPoints` with `st`, `et`, `at`, and `length` per stop).
 - **Show:**
